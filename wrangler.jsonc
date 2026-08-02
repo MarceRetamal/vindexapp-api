@@ -1,0 +1,28 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "vindexapp-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-02",
+  "compatibility_flags": ["nodejs_compat"],
+
+  // Base de datos del estudio (esquema aplicado: 001_esquema_inicial.sql)
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vindexapp-interna",
+      "database_id": "abd7cdf5-1aef-497f-94a8-a71608c4dfdb"
+    }
+  ],
+
+  // Almacenamiento de documentos (escritos, resoluciones, presupuestos, etc.)
+  "r2_buckets": [
+    {
+      "binding": "DOCUMENTOS",
+      "bucket_name": "vindexapp-documentos"
+    }
+  ],
+
+  "observability": {
+    "enabled": true
+  }
+}
