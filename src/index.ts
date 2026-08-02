@@ -1,7 +1,12 @@
 import { Hono } from 'hono';
 import type { Bindings } from './tipos';
+import { estudiosRouter } from './rutas/estudios';
+import { usuariosRouter } from './rutas/usuarios';
 
 const app = new Hono<{ Bindings: Bindings }>();
+
+app.route('/api/estudios', estudiosRouter);
+app.route('/api/usuarios', usuariosRouter);
 
 /**
  * Ruta de verificación. Sirve para confirmar, desde el navegador o con
@@ -21,12 +26,10 @@ app.get('/api/salud', async (c) => {
 });
 
 /**
- * A partir de acá se van sumando los routers por entidad:
+ * Siguientes routers a sumar, mismo patrón:
  *   app.route('/api/clientes', clientesRouter)
  *   app.route('/api/expedientes', expedientesRouter)
  *   ...
- * Cada uno en su propio archivo dentro de src/rutas/, para no repetir
- * el problema del archivo único de 1700+ líneas de la versión anterior.
  */
 
 export default app;
