@@ -24,8 +24,6 @@ expedientesRouter.post('/', async (c) => {
     );
   }
 
-  // Confirmamos que el cliente exista y pertenezca a este mismo estudio,
-  // antes de abrirle un expediente.
   const cliente = await c.env.DB.prepare(
     'SELECT id FROM clientes WHERE id = ? AND estudio_id = ?'
   )
@@ -76,12 +74,33 @@ expedientesRouter.get('/', async (c) => {
 
   const query = clienteId
     ? c.env.DB.prepare(
-        `SELECT * FROM expedientes WHERE estudio_id = ? AND cliente_id = ? ORDER BY creado_en DESC`
+        `SELECT e.*, c.nombre AS cliente_nombre, c.apellido AS cliente_apellido
+         FROM expedientes e JOIN clientes c ON c.id = e.cliente_id
+         WHERE e.estudio_id = ? AND e.cliente_id = ? ORDER BY e.creado_en DESC`
       ).bind(estudioId, clienteId)
     : c.env.DB.prepare(
-        `SELECT * FROM expedientes WHERE estudio_id = ? ORDER BY creado_en DESC`
+        `SELECT e.*, c.nombre AS cliente_nombre, c.apellido AS cliente_apellido
+         FROM expedientes e JOIN clientes c ON c.id = e.cliente_id
+         WHERE e.estudio_id = ? ORDER BY e.creado_en DESC`
       ).bind(estudioId);
 
   const { results } = await query.all();
   return c.json(results);
+});
+
+/** Un expediente puntual, con el nombre del cliente ya resuelto. */
+expedientesRouter.get('/:id', async (c) => {
+  const id = c.req.param('id');
+
+  const expediente = await c.env.DB.prepare(
+    `SELECT e.*, c.nombre AS cliente_nombre, c.apellido AS cliente_apellido
+     FROM expedientes e JOIN clientes c ON c.id = e.cliente_id
+     WHERE e.id = ?`
+  ).bind(id).first();
+
+  if (!expediente) {
+    return c.json({ error: 'Expediente no encontrado.' }, 404);
+  }
+
+  return c.json(expediente);
 });
