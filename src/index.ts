@@ -2,11 +2,14 @@ import { Hono } from 'hono';
 import type { Bindings } from './tipos';
 import { estudiosRouter } from './rutas/estudios';
 import { usuariosRouter } from './rutas/usuarios';
-
+import { clientesRouter } from './rutas/clientes';
+import { expedientesRouter } from './rutas/expedientes';
 const app = new Hono<{ Bindings: Bindings }>();
 
 app.route('/api/estudios', estudiosRouter);
 app.route('/api/usuarios', usuariosRouter);
+app.route('/api/clientes', clientesRouter);
+app.route('/api/expedientes', expedientesRouter);
 
 /**
  * Ruta de verificación. Sirve para confirmar, desde el navegador o con

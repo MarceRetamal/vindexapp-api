@@ -2233,10 +2233,131 @@ usuariosRouter.get("/", async (c) => {
   return c.json(results);
 });
 
+// src/rutas/clientes.ts
+var clientesRouter = new Hono2();
+clientesRouter.post("/", async (c) => {
+  const body = await c.req.json();
+  if (!body.estudio_id || !body.nombre || !body.apellido) {
+    return c.json({ error: "estudio_id, nombre y apellido son obligatorios." }, 400);
+  }
+  if (body.dni) {
+    const existente = await c.env.DB.prepare(
+      "SELECT id, nombre, apellido FROM clientes WHERE estudio_id = ? AND dni = ?"
+    ).bind(body.estudio_id, body.dni).first();
+    if (existente) {
+      return c.json(
+        {
+          error: "Ya existe un cliente con ese DNI.",
+          cliente_existente: existente
+        },
+        409
+      );
+    }
+  }
+  const id = crypto.randomUUID();
+  const creado_en = Date.now();
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO clientes
+        (id, estudio_id, nombre, apellido, dni, domicilio, localidad, telefono_fijo, whatsapp, email, estado, notas, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).bind(
+      id,
+      body.estudio_id,
+      body.nombre,
+      body.apellido,
+      body.dni ?? null,
+      body.domicilio ?? null,
+      body.localidad ?? null,
+      body.telefono_fijo ?? null,
+      body.whatsapp ?? null,
+      body.email ?? null,
+      body.estado ?? "Activo",
+      body.notas ?? null,
+      creado_en
+    ).run();
+  } catch (err) {
+    return c.json({ error: "Ya existe un cliente con ese DNI." }, 409);
+  }
+  return c.json({ id, nombre: body.nombre, apellido: body.apellido }, 201);
+});
+clientesRouter.get("/", async (c) => {
+  const estudioId = c.req.query("estudio_id");
+  const dni = c.req.query("dni");
+  if (!estudioId) {
+    return c.json({ error: "estudio_id es obligatorio como par\xE1metro de consulta." }, 400);
+  }
+  const query = dni ? c.env.DB.prepare(
+    `SELECT * FROM clientes WHERE estudio_id = ? AND dni = ?`
+  ).bind(estudioId, dni) : c.env.DB.prepare(
+    `SELECT * FROM clientes WHERE estudio_id = ? ORDER BY apellido, nombre`
+  ).bind(estudioId);
+  const { results } = await query.all();
+  return c.json(results);
+});
+
+// src/rutas/expedientes.ts
+var expedientesRouter = new Hono2();
+expedientesRouter.post("/", async (c) => {
+  const body = await c.req.json();
+  if (!body.estudio_id || !body.cliente_id || !body.caratula) {
+    return c.json(
+      { error: "estudio_id, cliente_id y caratula son obligatorios." },
+      400
+    );
+  }
+  const cliente = await c.env.DB.prepare(
+    "SELECT id FROM clientes WHERE id = ? AND estudio_id = ?"
+  ).bind(body.cliente_id, body.estudio_id).first();
+  if (!cliente) {
+    return c.json(
+      { error: "El cliente no existe o no pertenece a este estudio." },
+      404
+    );
+  }
+  const id = crypto.randomUUID();
+  const creado_en = Date.now();
+  await c.env.DB.prepare(
+    `INSERT INTO expedientes
+      (id, estudio_id, cliente_id, caratula, numero, fuero, juzgado, departamento, rol_procesal, estado, inicio, notas, creado_en)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'En tr\xE1mite', ?, ?, ?)`
+  ).bind(
+    id,
+    body.estudio_id,
+    body.cliente_id,
+    body.caratula,
+    body.numero ?? null,
+    body.fuero ?? null,
+    body.juzgado ?? null,
+    body.departamento ?? null,
+    body.rol_procesal ?? null,
+    body.inicio ?? null,
+    body.notas ?? null,
+    creado_en
+  ).run();
+  return c.json({ id, caratula: body.caratula, cliente_id: body.cliente_id }, 201);
+});
+expedientesRouter.get("/", async (c) => {
+  const estudioId = c.req.query("estudio_id");
+  const clienteId = c.req.query("cliente_id");
+  if (!estudioId) {
+    return c.json({ error: "estudio_id es obligatorio como par\xE1metro de consulta." }, 400);
+  }
+  const query = clienteId ? c.env.DB.prepare(
+    `SELECT * FROM expedientes WHERE estudio_id = ? AND cliente_id = ? ORDER BY creado_en DESC`
+  ).bind(estudioId, clienteId) : c.env.DB.prepare(
+    `SELECT * FROM expedientes WHERE estudio_id = ? ORDER BY creado_en DESC`
+  ).bind(estudioId);
+  const { results } = await query.all();
+  return c.json(results);
+});
+
 // src/index.ts
 var app = new Hono2();
 app.route("/api/estudios", estudiosRouter);
 app.route("/api/usuarios", usuariosRouter);
+app.route("/api/clientes", clientesRouter);
+app.route("/api/expedientes", expedientesRouter);
 app.get("/api/salud", async (c) => {
   const resultado = await c.env.DB.prepare(
     "SELECT COUNT(*) AS total FROM estudios"
