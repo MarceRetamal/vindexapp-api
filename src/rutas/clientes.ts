@@ -96,3 +96,18 @@ clientesRouter.get('/', async (c) => {
   const { results } = await query.all();
   return c.json(results);
 });
+
+/** Un cliente puntual. */
+clientesRouter.get('/:id', async (c) => {
+  const id = c.req.param('id');
+
+  const cliente = await c.env.DB.prepare(
+    'SELECT * FROM clientes WHERE id = ?'
+  ).bind(id).first();
+
+  if (!cliente) {
+    return c.json({ error: 'Cliente no encontrado.' }, 404);
+  }
+
+  return c.json(cliente);
+});
