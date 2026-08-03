@@ -2352,12 +2352,275 @@ expedientesRouter.get("/", async (c) => {
   return c.json(results);
 });
 
+// src/rutas/documentos.ts
+var documentosRouter = new Hono2();
+var CATEGORIAS_VALIDAS = [
+  "escrito_judicial",
+  "resolucion",
+  "presupuesto",
+  "estrategia",
+  "planilla",
+  "template",
+  "factura",
+  "captura",
+  "otro"
+];
+documentosRouter.post("/", async (c) => {
+  const body = await c.req.parseBody();
+  const archivo = body["archivo"];
+  if (!(archivo instanceof File)) {
+    return c.json({ error: 'Falta el archivo (campo "archivo").' }, 400);
+  }
+  const estudio_id = body["estudio_id"];
+  const categoria = body["categoria"];
+  if (!estudio_id || !categoria) {
+    return c.json({ error: "estudio_id y categoria son obligatorios." }, 400);
+  }
+  if (!CATEGORIAS_VALIDAS.includes(categoria)) {
+    return c.json({ error: `categoria debe ser una de: ${CATEGORIAS_VALIDAS.join(", ")}` }, 400);
+  }
+  const cliente_id = body["cliente_id"] || null;
+  const expediente_id = body["expediente_id"] || null;
+  const notas = body["notas"] || null;
+  const id = crypto.randomUUID();
+  const extension = archivo.name.includes(".") ? archivo.name.split(".").pop().toLowerCase() : "sin_extension";
+  const ruta_r2 = `${estudio_id}/${id}.${extension}`;
+  const creado_en = Date.now();
+  await c.env.DOCUMENTOS.put(ruta_r2, await archivo.arrayBuffer(), {
+    httpMetadata: { contentType: archivo.type || "application/octet-stream" }
+  });
+  await c.env.DB.prepare(
+    `INSERT INTO documentos
+      (id, estudio_id, cliente_id, expediente_id, categoria, nombre, extension, ruta_r2, tamano_bytes, notas, creado_en)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    id,
+    estudio_id,
+    cliente_id,
+    expediente_id,
+    categoria,
+    archivo.name,
+    extension,
+    ruta_r2,
+    archivo.size,
+    notas,
+    creado_en
+  ).run();
+  return c.json({ id, nombre: archivo.name, categoria, tamano_bytes: archivo.size }, 201);
+});
+documentosRouter.get("/", async (c) => {
+  const estudioId = c.req.query("estudio_id");
+  const expedienteId = c.req.query("expediente_id");
+  const clienteId = c.req.query("cliente_id");
+  if (!estudioId) {
+    return c.json({ error: "estudio_id es obligatorio." }, 400);
+  }
+  let sql = "SELECT id, categoria, nombre, extension, tamano_bytes, notas, creado_en FROM documentos WHERE estudio_id = ?";
+  const params = [estudioId];
+  if (expedienteId) {
+    sql += " AND expediente_id = ?";
+    params.push(expedienteId);
+  } else if (clienteId) {
+    sql += " AND cliente_id = ?";
+    params.push(clienteId);
+  }
+  sql += " ORDER BY creado_en DESC";
+  const { results } = await c.env.DB.prepare(sql).bind(...params).all();
+  return c.json(results);
+});
+documentosRouter.get("/:id/descargar", async (c) => {
+  const id = c.req.param("id");
+  const doc = await c.env.DB.prepare(
+    "SELECT nombre, ruta_r2 FROM documentos WHERE id = ?"
+  ).bind(id).first();
+  if (!doc) {
+    return c.json({ error: "Documento no encontrado." }, 404);
+  }
+  const objeto = await c.env.DOCUMENTOS.get(doc.ruta_r2);
+  if (!objeto) {
+    return c.json({ error: "El archivo no existe en el almacenamiento." }, 404);
+  }
+  c.header("Content-Disposition", `attachment; filename="${doc.nombre}"`);
+  return c.body(objeto.body);
+});
+
+// src/rutas/presupuestos.ts
+var presupuestosRouter = new Hono2();
+presupuestosRouter.post("/", async (c) => {
+  const body = await c.req.json();
+  if (!body.estudio_id || !body.concepto || body.monto === void 0) {
+    return c.json({ error: "estudio_id, concepto y monto son obligatorios." }, 400);
+  }
+  if (!body.cliente_id && !body.contacto_nombre) {
+    return c.json(
+      { error: "Falta cliente_id (cliente existente) o contacto_nombre (potencial cliente)." },
+      400
+    );
+  }
+  const id = crypto.randomUUID();
+  const creado_en = Date.now();
+  await c.env.DB.prepare(
+    `INSERT INTO presupuestos
+      (id, estudio_id, cliente_id, contacto_nombre, contacto_telefono, concepto, monto, estado, fecha_emision, creado_en)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'borrador', ?, ?)`
+  ).bind(
+    id,
+    body.estudio_id,
+    body.cliente_id ?? null,
+    body.contacto_nombre ?? null,
+    body.contacto_telefono ?? null,
+    body.concepto,
+    body.monto,
+    new Date(creado_en).toISOString().slice(0, 10),
+    creado_en
+  ).run();
+  return c.json({ id, estado: "borrador" }, 201);
+});
+presupuestosRouter.get("/", async (c) => {
+  const estudioId = c.req.query("estudio_id");
+  if (!estudioId) return c.json({ error: "estudio_id es obligatorio." }, 400);
+  const { results } = await c.env.DB.prepare(
+    "SELECT * FROM presupuestos WHERE estudio_id = ? ORDER BY creado_en DESC"
+  ).bind(estudioId).all();
+  return c.json(results);
+});
+presupuestosRouter.patch("/:id/estado", async (c) => {
+  const id = c.req.param("id");
+  const { estado } = await c.req.json();
+  if (!["enviado", "rechazado", "vencido"].includes(estado)) {
+    return c.json({ error: "estado inv\xE1lido. Us\xE1 /firmar para la firma." }, 400);
+  }
+  await c.env.DB.prepare("UPDATE presupuestos SET estado = ? WHERE id = ?").bind(estado, id).run();
+  return c.json({ id, estado });
+});
+presupuestosRouter.patch("/:id/firmar", async (c) => {
+  const id = c.req.param("id");
+  const body = await c.req.json();
+  const presupuesto = await c.env.DB.prepare(
+    "SELECT * FROM presupuestos WHERE id = ?"
+  ).bind(id).first();
+  if (!presupuesto) return c.json({ error: "Presupuesto no encontrado." }, 404);
+  if (presupuesto.estado === "firmado") {
+    return c.json({ error: "Este presupuesto ya est\xE1 firmado." }, 409);
+  }
+  if (!body.expediente_id) {
+    return c.json({ error: "expediente_id es obligatorio para firmar." }, 400);
+  }
+  let clienteId = presupuesto.cliente_id;
+  if (!clienteId) {
+    if (!body.nombre || !body.apellido) {
+      return c.json(
+        { error: "Es un presupuesto sin cliente formal: nombre y apellido son obligatorios para darlo de alta." },
+        400
+      );
+    }
+    clienteId = crypto.randomUUID();
+    await c.env.DB.prepare(
+      `INSERT INTO clientes (id, estudio_id, nombre, apellido, dni, telefono_fijo, estado, creado_en)
+       VALUES (?, ?, ?, ?, ?, ?, 'Activo', ?)`
+    ).bind(
+      clienteId,
+      presupuesto.estudio_id,
+      body.nombre,
+      body.apellido,
+      body.dni ?? null,
+      presupuesto.contacto_telefono ?? null,
+      Date.now()
+    ).run();
+  }
+  const fecha_firma = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
+  await c.env.DB.prepare(
+    `UPDATE presupuestos
+     SET estado = 'firmado', cliente_id = ?, expediente_id = ?, fecha_firma = ?
+     WHERE id = ?`
+  ).bind(clienteId, body.expediente_id, fecha_firma, id).run();
+  return c.json({ id, estado: "firmado", cliente_id: clienteId, expediente_id: body.expediente_id });
+});
+
+// src/rutas/estrategias.ts
+var estrategiasRouter = new Hono2();
+estrategiasRouter.post("/", async (c) => {
+  const body = await c.req.json();
+  if (!body.estudio_id || !body.expediente_id || !body.titulo) {
+    return c.json({ error: "estudio_id, expediente_id y titulo son obligatorios." }, 400);
+  }
+  const id = crypto.randomUUID();
+  const creado_en = Date.now();
+  await c.env.DB.prepare(
+    `INSERT INTO estrategias (id, estudio_id, expediente_id, titulo, contenido, creado_por, creado_en)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, body.estudio_id, body.expediente_id, body.titulo, body.contenido ?? null, body.creado_por ?? null, creado_en).run();
+  return c.json({ id, titulo: body.titulo }, 201);
+});
+estrategiasRouter.get("/", async (c) => {
+  const expedienteId = c.req.query("expediente_id");
+  if (!expedienteId) return c.json({ error: "expediente_id es obligatorio." }, 400);
+  const { results } = await c.env.DB.prepare(
+    "SELECT * FROM estrategias WHERE expediente_id = ? ORDER BY creado_en DESC"
+  ).bind(expedienteId).all();
+  return c.json(results);
+});
+estrategiasRouter.patch("/:id", async (c) => {
+  const id = c.req.param("id");
+  const { titulo, contenido } = await c.req.json();
+  await c.env.DB.prepare(
+    "UPDATE estrategias SET titulo = COALESCE(?, titulo), contenido = COALESCE(?, contenido), actualizado_en = ? WHERE id = ?"
+  ).bind(titulo ?? null, contenido ?? null, Date.now(), id).run();
+  return c.json({ id, actualizado: true });
+});
+
+// src/rutas/actuaciones.ts
+var actuacionesRouter = new Hono2();
+actuacionesRouter.post("/", async (c) => {
+  const body = await c.req.json();
+  if (!body.estudio_id || !body.expediente_id || !body.tipo || !body.fecha) {
+    return c.json({ error: "estudio_id, expediente_id, tipo y fecha son obligatorios." }, 400);
+  }
+  const id = crypto.randomUUID();
+  const creado_en = Date.now();
+  await c.env.DB.prepare(
+    `INSERT INTO actuaciones
+      (id, estudio_id, expediente_id, tipo, fecha, detalle_interno, texto_cliente, visible, hito, creado_por, creado_en)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(
+    id,
+    body.estudio_id,
+    body.expediente_id,
+    body.tipo,
+    body.fecha,
+    body.detalle_interno ?? null,
+    body.texto_cliente ?? null,
+    body.visible ? 1 : 0,
+    body.hito ? 1 : 0,
+    body.creado_por ?? null,
+    creado_en
+  ).run();
+  return c.json({ id, tipo: body.tipo, fecha: body.fecha }, 201);
+});
+actuacionesRouter.get("/", async (c) => {
+  const expedienteId = c.req.query("expediente_id");
+  if (!expedienteId) return c.json({ error: "expediente_id es obligatorio." }, 400);
+  const { results } = await c.env.DB.prepare(
+    "SELECT * FROM actuaciones WHERE expediente_id = ? ORDER BY fecha DESC, creado_en DESC"
+  ).bind(expedienteId).all();
+  return c.json(results);
+});
+actuacionesRouter.patch("/:id/notificar", async (c) => {
+  const id = c.req.param("id");
+  await c.env.DB.prepare("UPDATE actuaciones SET notificado = 1, visible = 1 WHERE id = ?").bind(id).run();
+  return c.json({ id, notificado: true });
+});
+
 // src/index.ts
 var app = new Hono2();
 app.route("/api/estudios", estudiosRouter);
 app.route("/api/usuarios", usuariosRouter);
 app.route("/api/clientes", clientesRouter);
 app.route("/api/expedientes", expedientesRouter);
+app.route("/api/documentos", documentosRouter);
+app.route("/api/presupuestos", presupuestosRouter);
+app.route("/api/estrategias", estrategiasRouter);
+app.route("/api/actuaciones", actuacionesRouter);
 app.get("/api/salud", async (c) => {
   const resultado = await c.env.DB.prepare(
     "SELECT COUNT(*) AS total FROM estudios"
@@ -2417,7 +2680,7 @@ var jsonError = /* @__PURE__ */ __name(async (request, env, _ctx, middlewareCtx)
 }, "jsonError");
 var middleware_miniflare3_json_error_default = jsonError;
 
-// .wrangler/tmp/bundle-UO0oGx/middleware-insertion-facade.js
+// .wrangler/tmp/bundle-e11yTy/middleware-insertion-facade.js
 var __INTERNAL_WRANGLER_MIDDLEWARE__ = [
   middleware_ensure_req_body_drained_default,
   middleware_miniflare3_json_error_default
@@ -2449,7 +2712,7 @@ function __facade_invoke__(request, env, ctx, dispatch, finalMiddleware) {
 }
 __name(__facade_invoke__, "__facade_invoke__");
 
-// .wrangler/tmp/bundle-UO0oGx/middleware-loader.entry.ts
+// .wrangler/tmp/bundle-e11yTy/middleware-loader.entry.ts
 var __Facade_ScheduledController__ = class ___Facade_ScheduledController__ {
   constructor(scheduledTime, cron, noRetry) {
     this.scheduledTime = scheduledTime;
