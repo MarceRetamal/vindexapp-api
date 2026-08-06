@@ -85,7 +85,12 @@ presupuestosRouter.patch('/:id/firmar', async (c) => {
 
   const presupuesto = await c.env.DB.prepare(
     'SELECT * FROM presupuestos WHERE id = ?'
-  ).bind(id).first<any>();
+  ).bind(id).first<{
+    estudio_id: string;
+    cliente_id: string | null;
+    contacto_telefono: string | null;
+    estado: string;
+  }>();
 
   if (!presupuesto) return c.json({ error: 'Presupuesto no encontrado.' }, 404);
   if (presupuesto.estado === 'firmado') {
@@ -93,6 +98,19 @@ presupuestosRouter.patch('/:id/firmar', async (c) => {
   }
   if (!body.expediente_id) {
     return c.json({ error: 'expediente_id es obligatorio para firmar.' }, 400);
+  }
+
+  const expediente = await c.env.DB.prepare(
+    'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
+  )
+    .bind(body.expediente_id, presupuesto.estudio_id)
+    .first();
+
+  if (!expediente) {
+    return c.json(
+      { error: 'El expediente no existe o no pertenece a este estudio.' },
+      404
+    );
   }
 
   let clienteId = presupuesto.cliente_id;

@@ -71,7 +71,10 @@ clientesRouter.post('/', async (c) => {
   } catch (err) {
     // Red de seguridad ante una carrera de dos pedidos simultáneos con
     // el mismo DNI (el chequeo de arriba no la cubre al 100%).
-    return c.json({ error: 'Ya existe un cliente con ese DNI.' }, 409);
+    if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+      return c.json({ error: 'Ya existe un cliente con ese DNI.' }, 409);
+    }
+    throw err;
   }
 
   return c.json({ id, nombre: body.nombre, apellido: body.apellido }, 201);

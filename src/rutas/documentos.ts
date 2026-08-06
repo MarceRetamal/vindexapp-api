@@ -93,11 +93,16 @@ documentosRouter.get('/', async (c) => {
 /** Descarga el archivo real, transmitido a través del Worker. */
 documentosRouter.get('/:id/descargar', async (c) => {
   const id = c.req.param('id');
+  const estudioId = c.req.query('estudio_id');
+
+  if (!estudioId) {
+    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
+  }
 
   const doc = await c.env.DB.prepare(
-    'SELECT nombre, ruta_r2 FROM documentos WHERE id = ?'
+    'SELECT nombre, ruta_r2 FROM documentos WHERE id = ? AND estudio_id = ?'
   )
-    .bind(id)
+    .bind(id, estudioId)
     .first<{ nombre: string; ruta_r2: string }>();
 
   if (!doc) {

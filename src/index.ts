@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { cors } from 'hono/cors';
 import type { Bindings } from './tipos';
 import { estudiosRouter } from './rutas/estudios';
 import { usuariosRouter } from './rutas/usuarios';
@@ -8,7 +9,18 @@ import { documentosRouter } from './rutas/documentos';
 import { presupuestosRouter } from './rutas/presupuestos';
 import { estrategiasRouter } from './rutas/estrategias';
 import { actuacionesRouter } from './rutas/actuaciones';
+import { templatesRouter } from './rutas/templates';
+import { audienciasRouter } from './rutas/audiencias';
+
 const app = new Hono<{ Bindings: Bindings }>();
+
+app.use(
+  '/api/*',
+  cors({
+    origin: ['http://localhost:5173', 'https://panel.vindexlegal.com.ar'],
+    allowMethods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  })
+);
 
 app.route('/api/estudios', estudiosRouter);
 app.route('/api/usuarios', usuariosRouter);
@@ -18,13 +30,14 @@ app.route('/api/documentos', documentosRouter);
 app.route('/api/presupuestos', presupuestosRouter);
 app.route('/api/estrategias', estrategiasRouter);
 app.route('/api/actuaciones', actuacionesRouter);
+app.route('/api/templates', templatesRouter);
+app.route('/api/audiencias', audienciasRouter);
 
+app.onError((err, c) => {
+  console.error(err);
+  return c.json({ error: 'Error interno del servidor.' }, 500);
+});
 
-/**
- * Ruta de verificación. Sirve para confirmar, desde el navegador o con
- * curl, que el Worker está desplegado y que la conexión con D1 funciona.
- * No requiere autenticación — no expone ningún dato del estudio.
- */
 app.get('/api/salud', async (c) => {
   const resultado = await c.env.DB.prepare(
     'SELECT COUNT(*) AS total FROM estudios'
@@ -36,12 +49,5 @@ app.get('/api/salud', async (c) => {
     estudios_registrados: resultado?.total ?? 0,
   });
 });
-
-/**
- * Siguientes routers a sumar, mismo patrón:
- *   app.route('/api/clientes', clientesRouter)
- *   app.route('/api/expedientes', expedientesRouter)
- *   ...
- */
 
 export default app;

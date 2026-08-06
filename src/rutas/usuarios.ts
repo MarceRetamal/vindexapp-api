@@ -57,7 +57,10 @@ usuariosRouter.post('/', async (c) => {
       .run();
   } catch (err) {
     // El email tiene restricción UNIQUE en el esquema.
-    return c.json({ error: 'No se pudo crear el usuario. ¿El email ya está en uso?' }, 409);
+    if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+      return c.json({ error: 'No se pudo crear el usuario. ¿El email ya está en uso?' }, 409);
+    }
+    throw err;
   }
 
   return c.json({ id, nombre: body.nombre, apellido: body.apellido, email: body.email }, 201);

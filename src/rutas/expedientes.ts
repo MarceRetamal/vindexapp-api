@@ -91,12 +91,17 @@ expedientesRouter.get('/', async (c) => {
 /** Un expediente puntual, con el nombre del cliente ya resuelto. */
 expedientesRouter.get('/:id', async (c) => {
   const id = c.req.param('id');
+  const estudioId = c.req.query('estudio_id');
+
+  if (!estudioId) {
+    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
+  }
 
   const expediente = await c.env.DB.prepare(
     `SELECT e.*, c.nombre AS cliente_nombre, c.apellido AS cliente_apellido
      FROM expedientes e JOIN clientes c ON c.id = e.cliente_id
-     WHERE e.id = ?`
-  ).bind(id).first();
+     WHERE e.id = ? AND e.estudio_id = ?`
+  ).bind(id, estudioId).first();
 
   if (!expediente) {
     return c.json({ error: 'Expediente no encontrado.' }, 404);
