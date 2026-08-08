@@ -81,12 +81,30 @@ pegándole directo al Worker.
   "sos una identidad válida de Google Workspace" de "todavía no estás dado de
   alta en VINDEX" — útil al incorporar abogados nuevos.
 
-## Cierre de las 6 fugas de aislamiento
+## Cierre del aislamiento por estudio (revisión de alcance)
 
-En los 6 endpoints listados arriba, `estudio_id` deja de leerse de query
-params/body (fuente no confiable, controlada por quien llama) y pasa a leerse de
-`c.get('auth').estudio_id` (fuente confiable, derivada del JWT verificado). Mismo
-patrón ya usado correctamente en `expedientes.ts` y `documentos.ts`.
+Los 6 endpoints listados arriba son los que el audit marcó porque **no filtran
+por `estudio_id` en absoluto**. Pero hay un problema más amplio que la
+autenticación deja al descubierto: incluso las rutas que hoy sí filtran
+correctamente (`expedientes.ts`, `documentos.ts`, y los `GET`/`POST` del resto
+de los routers) lo hacen confiando en un `estudio_id` que **viene del que
+llama** (query param o body). Una vez que hay autenticación real, seguir
+confiando en ese valor recrea el mismo problema: un usuario autenticado del
+Estudio A podría mandar `estudio_id` del Estudio B en la query o en el body y
+listar, crear o filtrar datos de otro estudio.
+
+Por eso la regla se aplica parejo a **todos** los routers de datos de negocio
+(`clientes`, `usuarios`, `expedientes`, `documentos`, `presupuestos`,
+`estrategias`, `actuaciones`, `audiencias`, `templates`): ningún handler vuelve
+a leer `estudio_id` de query params ni de body. Siempre se lee de
+`c.get('auth').estudio_id` (fuente confiable, derivada del JWT verificado). Esto
+incluye tanto los 6 endpoints marcados por el audit como los que ya filtraban
+"bien" pero seguían tomando el valor del cliente.
+
+Quedan afuera de esta regla `estudios.ts` (alta y listado del propio estudio:
+es la ruta de bootstrap que se usa antes de que exista ningún `usuario` con el
+que autenticar, igual que `/api/salud`) y — por supuesto — la ruta de
+autenticación misma.
 
 Cuando un `id` de la URL pertenece a otro estudio, la respuesta es `404` (no
 `403`) — para no confirmar la existencia del recurso en otro tenant. Ya es el
