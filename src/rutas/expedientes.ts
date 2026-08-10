@@ -109,3 +109,71 @@ expedientesRouter.get('/:id', async (c) => {
 
   return c.json(expediente);
 });
+
+/** Da de baja un expediente (baja lógica: no borra el registro). */
+expedientesRouter.patch('/:id/baja', async (c) => {
+  const id = c.req.param('id');
+  const estudioId = c.req.query('estudio_id');
+
+  if (!estudioId) {
+    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
+  }
+
+  const { motivo } = await c.req.json<{ motivo?: string }>();
+
+  const expediente = await c.env.DB.prepare(
+    'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
+  )
+    .bind(id, estudioId)
+    .first();
+
+  if (!expediente) {
+    return c.json({ error: 'Expediente no encontrado.' }, 404);
+  }
+
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  await c.env.DB.prepare(
+    `UPDATE expedientes SET estado = 'Archivado', baja = ?, motivo_baja = ? WHERE id = ?`
+  )
+    .bind(hoy, motivo ?? null, id)
+    .run();
+
+  const actualizado = await c.env.DB.prepare('SELECT * FROM expedientes WHERE id = ?')
+    .bind(id)
+    .first();
+
+  return c.json(actualizado);
+});
+
+/** Reactiva un expediente dado de baja. */
+expedientesRouter.patch('/:id/reactivar', async (c) => {
+  const id = c.req.param('id');
+  const estudioId = c.req.query('estudio_id');
+
+  if (!estudioId) {
+    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
+  }
+
+  const expediente = await c.env.DB.prepare(
+    'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
+  )
+    .bind(id, estudioId)
+    .first();
+
+  if (!expediente) {
+    return c.json({ error: 'Expediente no encontrado.' }, 404);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE expedientes SET estado = 'En trámite', baja = NULL, motivo_baja = NULL WHERE id = ?`
+  )
+    .bind(id)
+    .run();
+
+  const actualizado = await c.env.DB.prepare('SELECT * FROM expedientes WHERE id = ?')
+    .bind(id)
+    .first();
+
+  return c.json(actualizado);
+});
