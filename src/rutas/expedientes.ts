@@ -131,7 +131,9 @@ expedientesRouter.patch('/:id/baja', async (c) => {
     return c.json({ error: 'Expediente no encontrado.' }, 404);
   }
 
-  const hoy = new Date().toISOString().slice(0, 10);
+  const hoy = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Argentina/Buenos_Aires',
+  }).format(new Date());
 
   await c.env.DB.prepare(
     `UPDATE expedientes SET estado = 'Archivado', baja = ?, motivo_baja = ? WHERE id = ?`
