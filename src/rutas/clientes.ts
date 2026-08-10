@@ -114,3 +114,84 @@ clientesRouter.get('/:id', async (c) => {
 
   return c.json(cliente);
 });
+
+/** Actualiza campos de un cliente existente. Solo pisa los campos presentes en el body. */
+clientesRouter.patch('/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json<{
+    nombre?: string;
+    apellido?: string;
+    dni?: string;
+    domicilio?: string;
+    localidad?: string;
+    telefono_fijo?: string;
+    whatsapp?: string;
+    email?: string;
+    estado?: 'Activo' | 'Potencial' | 'Inactivo';
+    notas?: string;
+  }>();
+
+  const actual = await c.env.DB.prepare(
+    'SELECT id, estudio_id FROM clientes WHERE id = ?'
+  )
+    .bind(id)
+    .first<{ id: string; estudio_id: string }>();
+
+  if (!actual) {
+    return c.json({ error: 'Cliente no encontrado.' }, 404);
+  }
+
+  if (body.dni) {
+    const existente = await c.env.DB.prepare(
+      'SELECT id, nombre, apellido FROM clientes WHERE estudio_id = ? AND dni = ? AND id != ?'
+    )
+      .bind(actual.estudio_id, body.dni, id)
+      .first<{ id: string; nombre: string; apellido: string }>();
+
+    if (existente) {
+      return c.json(
+        { error: 'Ya existe un cliente con ese DNI.', cliente_existente: existente },
+        409
+      );
+    }
+  }
+
+  const campos: Record<string, unknown> = {
+    nombre: body.nombre,
+    apellido: body.apellido,
+    dni: body.dni,
+    domicilio: body.domicilio,
+    localidad: body.localidad,
+    telefono_fijo: body.telefono_fijo,
+    whatsapp: body.whatsapp,
+    email: body.email,
+    estado: body.estado,
+    notas: body.notas,
+  };
+
+  const entradas = Object.entries(campos).filter(([, valor]) => valor !== undefined);
+
+  if (entradas.length === 0) {
+    return c.json({ error: 'No se recibió ningún campo para actualizar.' }, 400);
+  }
+
+  const asignaciones = entradas.map(([campo]) => `${campo} = ?`).join(', ');
+  const valores = entradas.map(([, valor]) => valor);
+
+  try {
+    await c.env.DB.prepare(`UPDATE clientes SET ${asignaciones} WHERE id = ?`)
+      .bind(...valores, id)
+      .run();
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('UNIQUE constraint failed')) {
+      return c.json({ error: 'Ya existe un cliente con ese DNI.' }, 409);
+    }
+    throw err;
+  }
+
+  const actualizado = await c.env.DB.prepare('SELECT * FROM clientes WHERE id = ?')
+    .bind(id)
+    .first();
+
+  return c.json(actualizado);
+});
