@@ -37,13 +37,21 @@ src/
   db/               -> helpers de acceso a datos, si hace falta compartir lógica
 ```
 
+## Cloudflare Access
+
+Ya está activo delante de este Worker (login por credenciales de abogado,
+vía Google Workspace) — configurado a nivel de Cloudflare (dashboard/zona),
+no en el código del Worker. Por eso ninguna ruta de `src/rutas/` tiene su
+propio middleware de autenticación: todo el tráfico pasa primero por Access.
+Cualquier request sin sesión válida recibe un `302` hacia
+`*.cloudflareaccess.com` antes incluso de llegar al Worker (probarlo con
+`curl` sin credenciales de Access no funciona por este motivo).
+
 ## Pendiente, en orden
 
 1. Alta del primer `estudio` y del primer `usuario` (vos) en la base, para
    poder probar rutas reales.
-2. Cloudflare Access delante de este Worker (login por credenciales de
-   abogado, vía Google Workspace).
-3. Ruta de subida de documentos a R2 (URLs firmadas, no acceso directo al
+2. Ruta de subida de documentos a R2 (URLs firmadas, no acceso directo al
    bucket).
-4. Rutas CRUD de clientes y expedientes.
-5. Cifrado en reposo del chat interno.
+3. Rutas CRUD de clientes y expedientes.
+4. Cifrado en reposo del chat interno.

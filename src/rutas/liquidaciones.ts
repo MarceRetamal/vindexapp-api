@@ -101,8 +101,8 @@ function validarDatosBaseLiquidacion(
  * Liquidación de despido sin causa/indirecto para personal de casas particulares
  * (Ley 26.844). Endpoint de cálculo puro: no lee ni escribe en la base de datos.
  *
- * Sin autenticación todavía (se agrega con Access, ver README.md) — igual que el resto
- * de las rutas de este proyecto por ahora.
+ * Sin middleware de auth propio, igual que el resto de las rutas: Cloudflare Access
+ * ya protege todo el Worker a nivel de dashboard/zona (ver README.md).
  */
 liquidacionesRouter.post('/casas-particulares', async (c) => {
   const body = await c.req.json<BodyLiquidacionCasasParticulares>();
