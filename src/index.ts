@@ -11,6 +11,7 @@ import { estrategiasRouter } from './rutas/estrategias';
 import { actuacionesRouter } from './rutas/actuaciones';
 import { templatesRouter } from './rutas/templates';
 import { audienciasRouter } from './rutas/audiencias';
+import { liquidacionesRouter } from './rutas/liquidaciones';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -32,6 +33,7 @@ app.route('/api/estrategias', estrategiasRouter);
 app.route('/api/actuaciones', actuacionesRouter);
 app.route('/api/templates', templatesRouter);
 app.route('/api/audiencias', audienciasRouter);
+app.route('/api/liquidaciones', liquidacionesRouter);
 
 app.onError((err, c) => {
   console.error(err);
