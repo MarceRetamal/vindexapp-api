@@ -12,6 +12,7 @@ import { actuacionesRouter } from './rutas/actuaciones';
 import { templatesRouter } from './rutas/templates';
 import { audienciasRouter } from './rutas/audiencias';
 import { liquidacionesRouter } from './rutas/liquidaciones';
+import { whoamiRouter } from './rutas/whoami';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -20,6 +21,7 @@ app.use(
   cors({
     origin: ['http://localhost:5173', 'https://panel.vindexlegal.com.ar'],
     allowMethods: ['GET', 'POST', 'PATCH', 'DELETE'],
+    credentials: true,
   })
 );
 
@@ -34,6 +36,7 @@ app.route('/api/actuaciones', actuacionesRouter);
 app.route('/api/templates', templatesRouter);
 app.route('/api/audiencias', audienciasRouter);
 app.route('/api/liquidaciones', liquidacionesRouter);
+app.route('/api/whoami', whoamiRouter);
 
 app.onError((err, c) => {
   console.error(err);

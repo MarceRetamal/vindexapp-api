@@ -9,11 +9,14 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-  "hono": "^4.12.33"
-},
-"devDependencies": {
-  "@cloudflare/workers-types": "^5.20260801.1",
-  "typescript": "^5.7.2",
-  "wrangler": "^4.118.0"
-}
+    "hono": "^4.12.33",
+    "jose": "^6.2.8"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.3",
+    "@cloudflare/workers-types": "^5.20260815.1",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.123.0"
+  }
 }

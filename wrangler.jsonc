@@ -10,7 +10,8 @@
     {
       "binding": "DB",
       "database_name": "vindexapp-interna",
-      "database_id": "abd7cdf5-1aef-497f-94a8-a71608c4dfdb"
+      "database_id": "abd7cdf5-1aef-497f-94a8-a71608c4dfdb",
+      "remote": true
     }
   ],
 
@@ -18,11 +19,22 @@
   "r2_buckets": [
     {
       "binding": "DOCUMENTOS",
-      "bucket_name": "vindexapp-documentos"
+      "bucket_name": "vindexapp-documentos",
+      "remote": true
     }
   ],
 
   "observability": {
     "enabled": true
+  },
+
+  // Solo para desarrollo local: simula que estás logueado por Access con
+  // este email, sin tener que pasar por el login real cada vez que
+  // corrés wrangler dev. No afecta producción.
+  "access": {
+    "dev": {
+      "aud": "192c32db0a55abfea99d6eaa2cb90decf324a8ff2e5007e4973fea6dded2e1a2",
+      "identity": { "email": "retamalmarcelo078@gmail.com" }
+    }
   }
 }
