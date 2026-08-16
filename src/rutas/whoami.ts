@@ -4,7 +4,7 @@ import type { Bindings } from '../tipos';
 export const whoamiRouter = new Hono<{ Bindings: Bindings }>();
 
 whoamiRouter.get('/', async (c) => {
-  const access = (c.executionCtx as any).access;
+  const access = (c.executionCtx as unknown as ExecutionContext).access;
 
   if (!access) {
     return c.json({ error: 'No autenticado con Cloudflare Access.' }, 401);

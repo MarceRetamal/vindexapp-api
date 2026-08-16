@@ -146,3 +146,62 @@ presupuestosRouter.patch('/:id/firmar', async (c) => {
 
   return c.json({ id, estado: 'firmado', cliente_id: clienteId, expediente_id: body.expediente_id });
 });
+
+/** Edita campos básicos de un presupuesto que todavía no fue firmado. */
+presupuestosRouter.patch('/:id', async (c) => {
+  const id = c.req.param('id');
+  const presupuesto = await c.env.DB.prepare(
+    'SELECT estado FROM presupuestos WHERE id = ?'
+  ).bind(id).first<{ estado: string }>();
+
+  if (!presupuesto) return c.json({ error: 'Presupuesto no encontrado.' }, 404);
+  if (presupuesto.estado === 'firmado') {
+    return c.json({ error: 'No se puede editar un presupuesto ya firmado.' }, 409);
+  }
+
+  const body = await c.req.json<{
+    concepto?: string;
+    monto?: number;
+    contacto_nombre?: string;
+    contacto_telefono?: string;
+  }>();
+
+  const campos = {
+    concepto: body.concepto,
+    monto: body.monto,
+    contacto_nombre: body.contacto_nombre,
+    contacto_telefono: body.contacto_telefono,
+  };
+  const entradas = Object.entries(campos).filter(([, valor]) => valor !== undefined);
+  if (entradas.length === 0) {
+    return c.json({ error: 'No se recibió ningún campo para actualizar.' }, 400);
+  }
+  const asignaciones = entradas.map(([campo]) => `${campo} = ?`).join(', ');
+  const valores = entradas.map(([, valor]) => valor);
+
+  await c.env.DB.prepare(`UPDATE presupuestos SET ${asignaciones} WHERE id = ?`)
+    .bind(...valores, id)
+    .run();
+
+  const actualizado = await c.env.DB.prepare('SELECT * FROM presupuestos WHERE id = ?').bind(id).first();
+  return c.json(actualizado);
+});
+
+/** Elimina un presupuesto que todavía no fue firmado (borrador/enviado/rechazado/vencido). */
+presupuestosRouter.delete('/:id', async (c) => {
+  const id = c.req.param('id');
+  const presupuesto = await c.env.DB.prepare(
+    'SELECT estado FROM presupuestos WHERE id = ?'
+  ).bind(id).first<{ estado: string }>();
+
+  if (!presupuesto) return c.json({ error: 'Presupuesto no encontrado.' }, 404);
+  if (presupuesto.estado === 'firmado') {
+    return c.json(
+      { error: 'No se puede eliminar un presupuesto firmado: ya generó cliente y/o expediente vinculado.' },
+      409
+    );
+  }
+
+  await c.env.DB.prepare('DELETE FROM presupuestos WHERE id = ?').bind(id).run();
+  return c.json({ id, eliminado: true });
+});

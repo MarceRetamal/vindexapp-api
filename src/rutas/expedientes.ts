@@ -179,3 +179,77 @@ expedientesRouter.patch('/:id/reactivar', async (c) => {
 
   return c.json(actualizado);
 });
+expedientesRouter.patch("/:id", async (c) => {
+  const id = c.req.param("id");
+  const estudioId = c.req.query("estudio_id");
+  if (!estudioId) {
+    return c.json({ error: "estudio_id es obligatorio como parámetro de consulta." }, 400);
+  }
+  const actual = await c.env.DB.prepare(
+    "SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?"
+  ).bind(id, estudioId).first();
+  if (!actual) {
+    return c.json({ error: "Expediente no encontrado." }, 404);
+  }
+  const body = await c.req.json();
+  const campos = {
+    caratula: body.caratula,
+    numero: body.numero,
+    fuero: body.fuero,
+    juzgado: body.juzgado,
+    departamento: body.departamento,
+    rol_procesal: body.rol_procesal,
+    notas: body.notas,
+  };
+  const entradas = Object.entries(campos).filter(([, valor]) => valor !== undefined);
+  if (entradas.length === 0) {
+    return c.json({ error: "No se recibió ningún campo para actualizar." }, 400);
+  }
+  const asignaciones = entradas.map(([campo]) => `${campo} = ?`).join(", ");
+  const valores = entradas.map(([, valor]) => valor);
+  await c.env.DB.prepare(`UPDATE expedientes SET ${asignaciones} WHERE id = ?`)
+    .bind(...valores, id)
+    .run();
+  const actualizado = await c.env.DB.prepare("SELECT * FROM expedientes WHERE id = ?").bind(id).first();
+  return c.json(actualizado);
+});
+expedientesRouter.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  const estudioId = c.req.query("estudio_id");
+  if (!estudioId) {
+    return c.json({ error: "estudio_id es obligatorio como parámetro de consulta." }, 400);
+  }
+  const expediente = await c.env.DB.prepare(
+    "SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?"
+  ).bind(id, estudioId).first();
+  if (!expediente) {
+    return c.json({ error: "Expediente no encontrado." }, 404);
+  }
+
+  const [documentos, audiencias, actuaciones, estrategias, presupuestos] = await Promise.all([
+    c.env.DB.prepare("SELECT COUNT(*) AS total FROM documentos WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS total FROM audiencias WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS total FROM actuaciones WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS total FROM estrategias WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
+    c.env.DB.prepare("SELECT COUNT(*) AS total FROM presupuestos WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
+  ]);
+
+  const bloqueos: string[] = [];
+  if ((documentos?.total ?? 0) > 0) bloqueos.push(`${documentos!.total} documento(s)`);
+  if ((audiencias?.total ?? 0) > 0) bloqueos.push(`${audiencias!.total} audiencia(s)`);
+  if ((actuaciones?.total ?? 0) > 0) bloqueos.push(`${actuaciones!.total} actuación(es)`);
+  if ((estrategias?.total ?? 0) > 0) bloqueos.push(`${estrategias!.total} estrategia(s)`);
+  if ((presupuestos?.total ?? 0) > 0) bloqueos.push(`${presupuestos!.total} presupuesto(s)`);
+
+  if (bloqueos.length > 0) {
+    return c.json(
+      {
+        error: `No se puede eliminar: tiene registros vinculados (${bloqueos.join(", ")}). Usá PATCH /:id/baja para archivarlo en su lugar.`,
+      },
+      409
+    );
+  }
+
+  await c.env.DB.prepare("DELETE FROM expedientes WHERE id = ?").bind(id).run();
+  return c.json({ id, eliminado: true });
+});
