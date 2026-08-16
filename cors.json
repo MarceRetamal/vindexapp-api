@@ -1,0 +1,12 @@
+{
+  "rules": [
+    {
+      "allowed": {
+        "origins": ["https://panel.vindexlegal.com.ar", "http://localhost:5173"],
+        "methods": ["PUT", "GET"],
+        "headers": ["Content-Type"]
+      },
+      "maxAgeSeconds": 3600
+    }
+  ]
+}

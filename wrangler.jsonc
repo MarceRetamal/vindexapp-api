@@ -24,13 +24,16 @@
     }
   ],
 
+  // Credenciales no sensibles para firmar URLs presignadas de R2 (subida/descarga directa)
+  "vars": {
+    "R2_ACCOUNT_ID": "ac90cd69f2088668dcc37901b18b00a8",
+    "R2_BUCKET_NAME": "vindexapp-documentos"
+  },
+
   "observability": {
     "enabled": true
   },
 
-  // Solo para desarrollo local: simula que estás logueado por Access con
-  // este email, sin tener que pasar por el login real cada vez que
-  // corrés wrangler dev. No afecta producción.
   "access": {
     "dev": {
       "aud": "192c32db0a55abfea99d6eaa2cb90decf324a8ff2e5007e4973fea6dded2e1a2",
