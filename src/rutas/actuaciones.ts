@@ -14,6 +14,7 @@ actuacionesRouter.post('/', async (c) => {
     visible?: boolean;
     hito?: boolean;
     creado_por?: string;
+    vencimiento?: string;
   }>();
 
   if (!body.estudio_id || !body.expediente_id || !body.tipo || !body.fecha) {
@@ -25,13 +26,14 @@ actuacionesRouter.post('/', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO actuaciones
-      (id, estudio_id, expediente_id, tipo, fecha, detalle_interno, texto_cliente, visible, hito, creado_por, creado_en)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      (id, estudio_id, expediente_id, tipo, fecha, detalle_interno, texto_cliente, visible, hito, creado_por, creado_en, vencimiento)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       id, body.estudio_id, body.expediente_id, body.tipo, body.fecha,
       body.detalle_interno ?? null, body.texto_cliente ?? null,
-      body.visible ? 1 : 0, body.hito ? 1 : 0, body.creado_por ?? null, creado_en
+      body.visible ? 1 : 0, body.hito ? 1 : 0, body.creado_por ?? null, creado_en,
+      body.vencimiento ?? null
     )
     .run();
 
@@ -45,6 +47,36 @@ actuacionesRouter.get('/', async (c) => {
   const { results } = await c.env.DB.prepare(
     'SELECT * FROM actuaciones WHERE expediente_id = ? ORDER BY fecha DESC, creado_en DESC'
   ).bind(expedienteId).all();
+
+  return c.json(results);
+});
+
+/** Actuaciones con vencimiento manual dentro de los próximos N días (default 7). */
+actuacionesRouter.get('/vencimientos-proximos', async (c) => {
+  const estudioId = c.req.query('estudio_id');
+  if (!estudioId) return c.json({ error: 'estudio_id es obligatorio.' }, 400);
+
+  const dias = Number(c.req.query('dias') ?? '7');
+
+  const hoy = new Date();
+  const limite = new Date(hoy);
+  limite.setDate(limite.getDate() + dias);
+
+  const desde = hoy.toISOString().slice(0, 10);
+  const hasta = limite.toISOString().slice(0, 10);
+
+  const { results } = await c.env.DB.prepare(
+    `SELECT a.*, e.caratula, c.apellido AS cliente_apellido, c.nombre AS cliente_nombre
+       FROM actuaciones a
+       JOIN expedientes e ON e.id = a.expediente_id
+       JOIN clientes c ON c.id = e.cliente_id
+      WHERE a.estudio_id = ?
+        AND a.vencimiento IS NOT NULL
+        AND a.vencimiento BETWEEN ? AND ?
+      ORDER BY a.vencimiento ASC`
+  )
+    .bind(estudioId, desde, hasta)
+    .all();
 
   return c.json(results);
 });

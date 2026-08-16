@@ -13,6 +13,8 @@ import { templatesRouter } from './rutas/templates';
 import { audienciasRouter } from './rutas/audiencias';
 import { liquidacionesRouter } from './rutas/liquidaciones';
 import { whoamiRouter } from './rutas/whoami';
+import { tareasRouter } from './rutas/tareas';
+import { dashboardRouter } from './rutas/dashboard';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -37,6 +39,8 @@ app.route('/api/templates', templatesRouter);
 app.route('/api/audiencias', audienciasRouter);
 app.route('/api/liquidaciones', liquidacionesRouter);
 app.route('/api/whoami', whoamiRouter);
+app.route('/api/tareas', tareasRouter);
+app.route('/api/dashboard', dashboardRouter);
 
 app.onError((err, c) => {
   console.error(err);
