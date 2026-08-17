@@ -10,8 +10,10 @@
   },
   "dependencies": {
     "aws4fetch": "^1.0.20",
+    "docxtemplater": "^3.69.3",
     "hono": "^4.12.33",
-    "jose": "^6.2.8"
+    "jose": "^6.2.8",
+    "pizzip": "^3.2.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.20.3",
