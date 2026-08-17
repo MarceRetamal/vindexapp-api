@@ -66,7 +66,7 @@ actuacionesRouter.get('/vencimientos-proximos', async (c) => {
   const hasta = limite.toISOString().slice(0, 10);
 
   const { results } = await c.env.DB.prepare(
-    `SELECT a.*, e.caratula, c.apellido AS cliente_apellido, c.nombre AS cliente_nombre
+    `SELECT a.*, e.caratula AS expediente_caratula, c.apellido AS cliente_apellido, c.nombre AS cliente_nombre
        FROM actuaciones a
        JOIN expedientes e ON e.id = a.expediente_id
        JOIN clientes c ON c.id = e.cliente_id

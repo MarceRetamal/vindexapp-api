@@ -17,7 +17,7 @@ dashboardRouter.get('/', async (c) => {
   const [proximasAudiencias, vencimientosProximos, tareasTotal, tareasProximas, expedientesActivos] =
     await Promise.all([
       c.env.DB.prepare(
-        `SELECT au.*, e.caratula
+        `SELECT au.*, e.caratula AS expediente_caratula
            FROM audiencias au
            JOIN expedientes e ON e.id = au.expediente_id
           WHERE au.estudio_id = ? AND au.estado = 'Programada'
@@ -26,7 +26,7 @@ dashboardRouter.get('/', async (c) => {
       ).bind(estudioId).all(),
 
       c.env.DB.prepare(
-        `SELECT a.*, e.caratula, c.apellido AS cliente_apellido, c.nombre AS cliente_nombre
+        `SELECT a.*, e.caratula AS expediente_caratula, c.apellido AS cliente_apellido, c.nombre AS cliente_nombre
            FROM actuaciones a
            JOIN expedientes e ON e.id = a.expediente_id
            JOIN clientes c ON c.id = e.cliente_id
@@ -42,7 +42,7 @@ dashboardRouter.get('/', async (c) => {
       ).bind(estudioId).first<{ total: number }>(),
 
       c.env.DB.prepare(
-        `SELECT t.*, e.caratula
+        `SELECT t.*, e.caratula AS expediente_caratula
            FROM tareas t
            JOIN expedientes e ON e.id = t.expediente_id
           WHERE t.estudio_id = ? AND t.estado != 'Completada'
