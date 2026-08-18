@@ -162,4 +162,26 @@ documentosRouter.get("/:id/descargar", async (c) => {
   return c.json({ url_descarga, nombre: doc.nombre, expira_en_segundos: 300 });
 });
 
+documentosRouter.delete("/:id", async (c) => {
+  const id = c.req.param("id");
+  const estudioId = c.req.query("estudio_id");
+  if (!estudioId) {
+    return c.json({ error: "estudio_id es obligatorio como parámetro de consulta." }, 400);
+  }
+
+  const doc = await c.env.DB.prepare(
+    "SELECT ruta_r2 FROM documentos WHERE id = ? AND estudio_id = ?"
+  )
+    .bind(id, estudioId)
+    .first<{ ruta_r2: string }>();
+  if (!doc) {
+    return c.json({ error: "Documento no encontrado." }, 404);
+  }
+
+  await c.env.DOCUMENTOS.delete(doc.ruta_r2);
+  await c.env.DB.prepare("DELETE FROM documentos WHERE id = ?").bind(id).run();
+
+  return c.json({ id, eliminado: true });
+});
+
 export { documentosRouter };
