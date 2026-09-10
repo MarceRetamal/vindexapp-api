@@ -11,3 +11,16 @@ export async function crearEstudioDePrueba(db: D1Database): Promise<string> {
     .run();
   return id;
 }
+
+/** Cliente mínimo para pruebas que necesitan un cliente_id válido (ej. expedientes). */
+export async function crearClienteDePrueba(db: D1Database, estudioId: string): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO clientes (id, estudio_id, nombre, apellido, estado, creado_en)
+       VALUES (?, ?, 'Cliente', 'De Prueba', 'Activo', ?)`
+    )
+    .bind(id, estudioId, Date.now())
+    .run();
+  return id;
+}
