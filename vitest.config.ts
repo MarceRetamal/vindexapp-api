@@ -19,7 +19,16 @@ export default defineConfig({
         compatibilityDate: '2026-08-02',
         compatibilityFlags: ['nodejs_compat'],
         d1Databases: ['DB'],
-        bindings: { TEST_MIGRATIONS: migrations },
+        // R2 local (no el bucket real `vindexapp-documentos`). Las credenciales de
+        // firma son dummies: aws4fetch solo firma la URL localmente, no llama a AWS/R2.
+        r2Buckets: ['DOCUMENTOS'],
+        bindings: {
+          TEST_MIGRATIONS: migrations,
+          R2_ACCESS_KEY_ID: 'test-access-key-id',
+          R2_SECRET_ACCESS_KEY: 'test-secret-access-key',
+          R2_ACCOUNT_ID: 'test-account-id',
+          R2_BUCKET_NAME: 'vindexapp-documentos-test',
+        },
       },
     }),
   ],
