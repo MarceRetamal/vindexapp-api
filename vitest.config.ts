@@ -1,6 +1,26 @@
+import path from 'node:path';
 import { defineConfig } from 'vitest/config';
-import { cloudflareTest } from '@cloudflare/vitest-pool-workers';
+import { cloudflareTest, readD1Migrations } from '@cloudflare/vitest-pool-workers';
+
+const migrations = await readD1Migrations(path.join(import.meta.dirname, 'migrations'));
 
 export default defineConfig({
-  plugins: [cloudflareTest({ wrangler: { configPath: './wrangler.jsonc' } })],
+  test: {
+    setupFiles: ['./test/aplicar-migraciones.ts'],
+  },
+  plugins: [
+    cloudflareTest({
+      main: 'src/index.ts',
+      // D1/R2 son `remote: true` en wrangler.jsonc (apuntan a los recursos reales de
+      // producción, detrás de Cloudflare Access). Los tests NO deben tocar eso: se
+      // declara un binding DB local propio acá, en vez de leerlo de wrangler.jsonc,
+      // para que corran sin login ni Access service tokens.
+      miniflare: {
+        compatibilityDate: '2026-08-02',
+        compatibilityFlags: ['nodejs_compat'],
+        d1Databases: ['DB'],
+        bindings: { TEST_MIGRATIONS: migrations },
+      },
+    }),
+  ],
 });

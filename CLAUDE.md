@@ -6,7 +6,7 @@ Backend de VINDEX LEGAL App: Cloudflare Worker (Hono) + D1 + R2. Ver `README.md`
 
 - `npm run dev` — levanta el Worker local (usa bindings remotos de D1/R2 vía `remote: true`; hace falta `npx wrangler login` la primera vez).
 - `npm run typecheck` — `tsc --noEmit`. Correlo antes de dar por terminado cualquier cambio; `strict` + `noUncheckedIndexedAccess` están activos.
-- `npm test` — `vitest run` sobre `@cloudflare/vitest-pool-workers`. Primer corrida puede tardar ~30s porque abre una conexión remota a Cloudflare para resolver los bindings de `wrangler.jsonc`, incluso en tests que no los usan.
+- `npm test` — `vitest run` sobre `@cloudflare/vitest-pool-workers`. Corre 100% local (D1 en memoria vía `d1Databases: ['DB']` en `vitest.config.ts`, esquema real aplicado desde `migrations/` por `test/aplicar-migraciones.ts`) — **no** lee los bindings `remote: true` de `wrangler.jsonc`, así que no requiere `wrangler login` ni toca D1/R2 de producción.
 - `npm run deploy` — despliega a Cloudflare. No lo corras sin que te lo pidan explícitamente.
 
 ## Convenciones del codebase
@@ -27,7 +27,8 @@ Cloudflare Access está configurado a nivel de infraestructura (dashboard/zona),
 
 - Antes de marcar cualquier cambio en `src/liquidaciones/motores.ts` (u otra lógica de cálculo) como terminado, agregá o actualizá el test correspondiente en el archivo `.test.ts` junto al módulo — es lógica pura de montos legales, sin red de seguridad no se detectan regresiones.
 - Los motores de liquidación tienen reglas legales verificadas contra texto de ley específico (ver comentarios al inicio de `motores.ts`). No completes un motor marcado como "PENDIENTE" o "ESQUELETO" con valores recordados de memoria — el propio archivo lo prohíbe explícitamente.
-- Para rutas que tocan D1/R2, todavía no hay tests de integración armados (pendiente). Si agregás uno, usará el mismo `vitest.config.ts` — no crees un segundo runner.
+- Tests de integración de rutas que tocan D1: `src/rutas/<entidad>.integration.test.ts`, vía `SELF.fetch(...)` (importado de `cloudflare:test`) contra el Worker completo. Usá `crearEstudioDePrueba()` de `test/fixtures.ts` para el `estudio_id` — casi toda tabla lo exige por FK. Import `env` desde `test/env.ts` (no directo de `cloudflare:test`) para tener `env.DB` tipado contra `Bindings`. Ver `src/rutas/clientes.integration.test.ts` como referencia del patrón (camino feliz, 400 de validación, 404, y el 409 del constraint UNIQUE por estudio).
+- Al sumar una tabla nueva a `migrations/`, no hace falta tocar `vitest.config.ts` — `readD1Migrations()` lee todo `migrations/` en cada corrida.
 
 ## Qué evitar
 
