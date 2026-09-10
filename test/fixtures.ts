@@ -24,3 +24,20 @@ export async function crearClienteDePrueba(db: D1Database, estudioId: string): P
     .run();
   return id;
 }
+
+/** Expediente mínimo para pruebas que necesitan un expediente_id válido (ej. presupuestos al firmar). */
+export async function crearExpedienteDePrueba(
+  db: D1Database,
+  estudioId: string,
+  clienteId: string
+): Promise<string> {
+  const id = crypto.randomUUID();
+  await db
+    .prepare(
+      `INSERT INTO expedientes (id, estudio_id, cliente_id, caratula, estado, creado_en)
+       VALUES (?, ?, ?, 'Expediente de prueba', 'En trámite', ?)`
+    )
+    .bind(id, estudioId, clienteId, Date.now())
+    .run();
+  return id;
+}
