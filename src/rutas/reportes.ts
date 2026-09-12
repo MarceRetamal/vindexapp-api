@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const reportesRouter = new Hono<{ Bindings: Bindings }>();
+export const reportesRouter = new Hono<Env>();
+
+reportesRouter.use('*', requireAuth());
 
 reportesRouter.get('/expedientes', async (c) => {
-  const estudioId = c.req.query('estudio_id');
-  if (!estudioId) return c.json({ error: 'estudio_id es obligatorio.' }, 400);
+  const auth = c.get('auth');
+  const estudioId = auth.estudio_id;
 
   const [porEstado, porFuero, porDepartamento, bajasUltimos90Dias] = await Promise.all([
     c.env.DB.prepare(
@@ -46,8 +49,8 @@ reportesRouter.get('/expedientes', async (c) => {
 });
 
 reportesRouter.get('/presupuestos', async (c) => {
-  const estudioId = c.req.query('estudio_id');
-  if (!estudioId) return c.json({ error: 'estudio_id es obligatorio.' }, 400);
+  const auth = c.get('auth');
+  const estudioId = auth.estudio_id;
 
   const hoy = new Date();
   const hace90 = new Date(hoy);
