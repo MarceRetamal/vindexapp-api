@@ -1,18 +1,21 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const templatesRouter = new Hono<{ Bindings: Bindings }>();
+export const templatesRouter = new Hono<Env>();
+
+templatesRouter.use('*', requireAuth());
 
 templatesRouter.post('/', async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json<{
-    estudio_id: string;
     nombre: string;
     categoria?: string;
     documento_id?: string;
   }>();
 
-  if (!body.estudio_id || !body.nombre) {
-    return c.json({ error: 'estudio_id y nombre son obligatorios.' }, 400);
+  if (!body.nombre) {
+    return c.json({ error: 'nombre es obligatorio.' }, 400);
   }
 
   const id = crypto.randomUUID();
@@ -22,23 +25,21 @@ templatesRouter.post('/', async (c) => {
     `INSERT INTO templates (id, estudio_id, nombre, categoria, documento_id, creado_en)
      VALUES (?, ?, ?, ?, ?, ?)`
   )
-    .bind(id, body.estudio_id, body.nombre, body.categoria ?? null, body.documento_id ?? null, creado_en)
+    .bind(id, auth.estudio_id, body.nombre, body.categoria ?? null, body.documento_id ?? null, creado_en)
     .run();
 
   return c.json({ id, nombre: body.nombre }, 201);
 });
 
 templatesRouter.get('/', async (c) => {
-  const estudioId = c.req.query('estudio_id');
-  if (!estudioId) return c.json({ error: 'estudio_id es obligatorio.' }, 400);
-
+  const auth = c.get('auth');
   const categoria = c.req.query('categoria');
 
   const query = categoria
     ? c.env.DB.prepare(
         'SELECT * FROM templates WHERE estudio_id = ? AND categoria = ? ORDER BY nombre'
-      ).bind(estudioId, categoria)
-    : c.env.DB.prepare('SELECT * FROM templates WHERE estudio_id = ? ORDER BY nombre').bind(estudioId);
+      ).bind(auth.estudio_id, categoria)
+    : c.env.DB.prepare('SELECT * FROM templates WHERE estudio_id = ? ORDER BY nombre').bind(auth.estudio_id);
 
   const { results } = await query.all();
   return c.json(results);

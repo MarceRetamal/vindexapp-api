@@ -25,9 +25,13 @@
   ],
 
   // Credenciales no sensibles para firmar URLs presignadas de R2 (subida/descarga directa)
+  // más las de verificación de Cloudflare Access (no son secretas: identifican la app
+  // de Access, no autentican nada por sí solas).
   "vars": {
     "R2_ACCOUNT_ID": "ac90cd69f2088668dcc37901b18b00a8",
-    "R2_BUCKET_NAME": "vindexapp-documentos"
+    "R2_BUCKET_NAME": "vindexapp-documentos",
+    "ACCESS_TEAM_DOMINIO": "retamalmarcelo078",
+    "ACCESS_AUD": "192c32db0a55abfea99d6eaa2cb90decf324a8ff2e5007e4973fea6dded2e1a2"
   },
 
   "observability": {

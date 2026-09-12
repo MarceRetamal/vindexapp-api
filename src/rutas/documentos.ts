@@ -1,12 +1,11 @@
 import { Hono } from "hono";
-import { firmarUrlR2, type BindingsR2 } from "../lib/r2-firmado";
+import { firmarUrlR2 } from "../lib/r2-firmado";
+import type { Env } from "../tipos";
+import { requireAuth } from "../middleware/auth";
 
-interface Bindings extends BindingsR2 {
-  DB: D1Database;
-  DOCUMENTOS: R2Bucket;
-}
+const documentosRouter = new Hono<Env>();
 
-const documentosRouter = new Hono<{ Bindings: Bindings }>();
+documentosRouter.use('*', requireAuth());
 
 const CATEGORIAS_VALIDAS = [
   "escrito_judicial",
@@ -23,12 +22,13 @@ const CATEGORIAS_VALIDAS = [
 // Paso 1 del flujo: el frontend pide una URL para subir directo a R2.
 // Todavía no se toca la base — se firma la URL y se devuelve.
 documentosRouter.post("/solicitar-subida", async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json();
-  const { estudio_id, categoria, nombre_archivo, content_type } = body;
+  const { categoria, nombre_archivo, content_type } = body;
 
-  if (!estudio_id || !categoria || !nombre_archivo) {
+  if (!categoria || !nombre_archivo) {
     return c.json(
-      { error: "estudio_id, categoria y nombre_archivo son obligatorios." },
+      { error: "categoria y nombre_archivo son obligatorios." },
       400
     );
   }
@@ -43,7 +43,7 @@ documentosRouter.post("/solicitar-subida", async (c) => {
   const extension = nombre_archivo.includes(".")
     ? nombre_archivo.split(".").pop()!.toLowerCase()
     : "sin_extension";
-  const ruta_r2 = `${estudio_id}/${id}.${extension}`;
+  const ruta_r2 = `${auth.estudio_id}/${id}.${extension}`;
 
   const url_subida = await firmarUrlR2(c.env, "PUT", ruta_r2, {
     contentType: content_type || "application/octet-stream",
@@ -56,10 +56,10 @@ documentosRouter.post("/solicitar-subida", async (c) => {
 // Paso 2: el frontend ya hizo el PUT directo a R2 con url_subida.
 // Recién acá se verifica que el objeto exista y se registra en D1.
 documentosRouter.post("/confirmar-subida", async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json();
   const {
     id,
-    estudio_id,
     categoria,
     nombre_archivo,
     ruta_r2,
@@ -68,11 +68,15 @@ documentosRouter.post("/confirmar-subida", async (c) => {
     notas,
   } = body;
 
-  if (!id || !estudio_id || !categoria || !nombre_archivo || !ruta_r2) {
+  if (!id || !categoria || !nombre_archivo || !ruta_r2) {
     return c.json(
-      { error: "id, estudio_id, categoria, nombre_archivo y ruta_r2 son obligatorios." },
+      { error: "id, categoria, nombre_archivo y ruta_r2 son obligatorios." },
       400
     );
+  }
+
+  if (!ruta_r2.startsWith(`${auth.estudio_id}/`)) {
+    return c.json({ error: "ruta_r2 no corresponde a este estudio." }, 403);
   }
 
   const cabecera = await c.env.DOCUMENTOS.head(ruta_r2);
@@ -95,7 +99,7 @@ documentosRouter.post("/confirmar-subida", async (c) => {
   )
     .bind(
       id,
-      estudio_id,
+      auth.estudio_id,
       cliente_id ?? null,
       expediente_id ?? null,
       categoria,
@@ -115,15 +119,13 @@ documentosRouter.post("/confirmar-subida", async (c) => {
 });
 
 documentosRouter.get("/", async (c) => {
-  const estudioId = c.req.query("estudio_id");
+  const auth = c.get('auth');
   const expedienteId = c.req.query("expediente_id");
   const clienteId = c.req.query("cliente_id");
-  if (!estudioId) {
-    return c.json({ error: "estudio_id es obligatorio." }, 400);
-  }
+
   let sql =
     "SELECT id, categoria, nombre, extension, tamano_bytes, notas, creado_en FROM documentos WHERE estudio_id = ?";
-  const params: unknown[] = [estudioId];
+  const params: unknown[] = [auth.estudio_id];
   if (expedienteId) {
     sql += " AND expediente_id = ?";
     params.push(expedienteId);
@@ -138,15 +140,13 @@ documentosRouter.get("/", async (c) => {
 
 // Ahora devuelve una URL firmada de lectura (5 min), no el archivo proxiado.
 documentosRouter.get("/:id/descargar", async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param("id");
-  const estudioId = c.req.query("estudio_id");
-  if (!estudioId) {
-    return c.json({ error: "estudio_id es obligatorio como parámetro de consulta." }, 400);
-  }
+
   const doc = await c.env.DB.prepare(
     "SELECT nombre, ruta_r2 FROM documentos WHERE id = ? AND estudio_id = ?"
   )
-    .bind(id, estudioId)
+    .bind(id, auth.estudio_id)
     .first<{ nombre: string; ruta_r2: string }>();
   if (!doc) {
     return c.json({ error: "Documento no encontrado." }, 404);
@@ -163,16 +163,13 @@ documentosRouter.get("/:id/descargar", async (c) => {
 });
 
 documentosRouter.delete("/:id", async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param("id");
-  const estudioId = c.req.query("estudio_id");
-  if (!estudioId) {
-    return c.json({ error: "estudio_id es obligatorio como parámetro de consulta." }, 400);
-  }
 
   const doc = await c.env.DB.prepare(
     "SELECT ruta_r2 FROM documentos WHERE id = ? AND estudio_id = ?"
   )
-    .bind(id, estudioId)
+    .bind(id, auth.estudio_id)
     .first<{ ruta_r2: string }>();
   if (!doc) {
     return c.json({ error: "Documento no encontrado." }, 404);

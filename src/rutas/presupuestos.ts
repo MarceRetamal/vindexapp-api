@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const presupuestosRouter = new Hono<{ Bindings: Bindings }>();
+export const presupuestosRouter = new Hono<Env>();
+
+presupuestosRouter.use('*', requireAuth());
 
 presupuestosRouter.post('/', async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json<{
-    estudio_id: string;
     cliente_id?: string;
     contacto_nombre?: string;
     contacto_telefono?: string;
@@ -13,14 +16,25 @@ presupuestosRouter.post('/', async (c) => {
     monto: number;
   }>();
 
-  if (!body.estudio_id || !body.concepto || body.monto === undefined) {
-    return c.json({ error: 'estudio_id, concepto y monto son obligatorios.' }, 400);
+  if (!body.concepto || body.monto === undefined) {
+    return c.json({ error: 'concepto y monto son obligatorios.' }, 400);
   }
   if (!body.cliente_id && !body.contacto_nombre) {
     return c.json(
       { error: 'Falta cliente_id (cliente existente) o contacto_nombre (potencial cliente).' },
       400
     );
+  }
+
+  if (body.cliente_id) {
+    const cliente = await c.env.DB.prepare(
+      'SELECT id FROM clientes WHERE id = ? AND estudio_id = ?'
+    )
+      .bind(body.cliente_id, auth.estudio_id)
+      .first();
+    if (!cliente) {
+      return c.json({ error: 'El cliente no existe o no pertenece a este estudio.' }, 404);
+    }
   }
 
   const id = crypto.randomUUID();
@@ -32,7 +46,7 @@ presupuestosRouter.post('/', async (c) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, 'borrador', ?, ?)`
   )
     .bind(
-      id, body.estudio_id, body.cliente_id ?? null, body.contacto_nombre ?? null,
+      id, auth.estudio_id, body.cliente_id ?? null, body.contacto_nombre ?? null,
       body.contacto_telefono ?? null, body.concepto, body.monto,
       new Date(creado_en).toISOString().slice(0, 10), creado_en
     )
@@ -42,23 +56,30 @@ presupuestosRouter.post('/', async (c) => {
 });
 
 presupuestosRouter.get('/', async (c) => {
-  const estudioId = c.req.query('estudio_id');
-  if (!estudioId) return c.json({ error: 'estudio_id es obligatorio.' }, 400);
+  const auth = c.get('auth');
 
   const { results } = await c.env.DB.prepare(
     'SELECT * FROM presupuestos WHERE estudio_id = ? ORDER BY creado_en DESC'
-  ).bind(estudioId).all();
+  ).bind(auth.estudio_id).all();
 
   return c.json(results);
 });
 
 /** Cambia el estado (enviado / rechazado / vencido) — transición simple. */
 presupuestosRouter.patch('/:id/estado', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
   const { estado } = await c.req.json<{ estado: string }>();
 
   if (!['enviado', 'rechazado', 'vencido'].includes(estado)) {
     return c.json({ error: 'estado inválido. Usá /firmar para la firma.' }, 400);
+  }
+
+  const presupuesto = await c.env.DB.prepare(
+    'SELECT id FROM presupuestos WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first();
+  if (!presupuesto) {
+    return c.json({ error: 'Presupuesto no encontrado.' }, 404);
   }
 
   await c.env.DB.prepare('UPDATE presupuestos SET estado = ? WHERE id = ?')
@@ -75,6 +96,7 @@ presupuestosRouter.patch('/:id/estado', async (c) => {
  * /api/expedientes, y se vincula acá).
  */
 presupuestosRouter.patch('/:id/firmar', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
   const body = await c.req.json<{
     expediente_id: string;
@@ -84,8 +106,8 @@ presupuestosRouter.patch('/:id/firmar', async (c) => {
   }>();
 
   const presupuesto = await c.env.DB.prepare(
-    'SELECT * FROM presupuestos WHERE id = ?'
-  ).bind(id).first<{
+    'SELECT * FROM presupuestos WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first<{
     estudio_id: string;
     cliente_id: string | null;
     contacto_telefono: string | null;
@@ -103,7 +125,7 @@ presupuestosRouter.patch('/:id/firmar', async (c) => {
   const expediente = await c.env.DB.prepare(
     'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
   )
-    .bind(body.expediente_id, presupuesto.estudio_id)
+    .bind(body.expediente_id, auth.estudio_id)
     .first();
 
   if (!expediente) {
@@ -128,7 +150,7 @@ presupuestosRouter.patch('/:id/firmar', async (c) => {
        VALUES (?, ?, ?, ?, ?, ?, 'Activo', ?)`
     )
       .bind(
-        clienteId, presupuesto.estudio_id, body.nombre, body.apellido,
+        clienteId, auth.estudio_id, body.nombre, body.apellido,
         body.dni ?? null, presupuesto.contacto_telefono ?? null, Date.now()
       )
       .run();
@@ -149,10 +171,11 @@ presupuestosRouter.patch('/:id/firmar', async (c) => {
 
 /** Edita campos básicos de un presupuesto que todavía no fue firmado. */
 presupuestosRouter.patch('/:id', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
   const presupuesto = await c.env.DB.prepare(
-    'SELECT estado FROM presupuestos WHERE id = ?'
-  ).bind(id).first<{ estado: string }>();
+    'SELECT estado FROM presupuestos WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first<{ estado: string }>();
 
   if (!presupuesto) return c.json({ error: 'Presupuesto no encontrado.' }, 404);
   if (presupuesto.estado === 'firmado') {
@@ -189,10 +212,11 @@ presupuestosRouter.patch('/:id', async (c) => {
 
 /** Elimina un presupuesto que todavía no fue firmado (borrador/enviado/rechazado/vencido). */
 presupuestosRouter.delete('/:id', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
   const presupuesto = await c.env.DB.prepare(
-    'SELECT estado FROM presupuestos WHERE id = ?'
-  ).bind(id).first<{ estado: string }>();
+    'SELECT estado FROM presupuestos WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first<{ estado: string }>();
 
   if (!presupuesto) return c.json({ error: 'Presupuesto no encontrado.' }, 404);
   if (presupuesto.estado === 'firmado') {

@@ -28,6 +28,10 @@ export default defineConfig({
           R2_SECRET_ACCESS_KEY: 'test-secret-access-key',
           R2_ACCOUNT_ID: 'test-account-id',
           R2_BUCKET_NAME: 'vindexapp-documentos-test',
+          // Valores fijos de prueba, independientes de los reales de wrangler.jsonc,
+          // para que los tests de auth no dependan de configuración de producción.
+          ACCESS_TEAM_DOMINIO: 'equipo-de-prueba',
+          ACCESS_AUD: 'aud-de-prueba',
         },
       },
     }),

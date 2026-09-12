@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const expedientesRouter = new Hono<{ Bindings: Bindings }>();
+export const expedientesRouter = new Hono<Env>();
+
+expedientesRouter.use('*', requireAuth());
 
 expedientesRouter.post('/', async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json<{
-    estudio_id: string;
     cliente_id: string;
     caratula: string;
     numero?: string;
@@ -17,17 +20,14 @@ expedientesRouter.post('/', async (c) => {
     notas?: string;
   }>();
 
-  if (!body.estudio_id || !body.cliente_id || !body.caratula) {
-    return c.json(
-      { error: 'estudio_id, cliente_id y caratula son obligatorios.' },
-      400
-    );
+  if (!body.cliente_id || !body.caratula) {
+    return c.json({ error: 'cliente_id y caratula son obligatorios.' }, 400);
   }
 
   const cliente = await c.env.DB.prepare(
     'SELECT id FROM clientes WHERE id = ? AND estudio_id = ?'
   )
-    .bind(body.cliente_id, body.estudio_id)
+    .bind(body.cliente_id, auth.estudio_id)
     .first();
 
   if (!cliente) {
@@ -47,7 +47,7 @@ expedientesRouter.post('/', async (c) => {
   )
     .bind(
       id,
-      body.estudio_id,
+      auth.estudio_id,
       body.cliente_id,
       body.caratula,
       body.numero ?? null,
@@ -65,24 +65,20 @@ expedientesRouter.post('/', async (c) => {
 });
 
 expedientesRouter.get('/', async (c) => {
-  const estudioId = c.req.query('estudio_id');
+  const auth = c.get('auth');
   const clienteId = c.req.query('cliente_id');
-
-  if (!estudioId) {
-    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
-  }
 
   const query = clienteId
     ? c.env.DB.prepare(
         `SELECT e.*, c.nombre AS cliente_nombre, c.apellido AS cliente_apellido
          FROM expedientes e JOIN clientes c ON c.id = e.cliente_id
          WHERE e.estudio_id = ? AND e.cliente_id = ? ORDER BY e.creado_en DESC`
-      ).bind(estudioId, clienteId)
+      ).bind(auth.estudio_id, clienteId)
     : c.env.DB.prepare(
         `SELECT e.*, c.nombre AS cliente_nombre, c.apellido AS cliente_apellido
          FROM expedientes e JOIN clientes c ON c.id = e.cliente_id
          WHERE e.estudio_id = ? ORDER BY e.creado_en DESC`
-      ).bind(estudioId);
+      ).bind(auth.estudio_id);
 
   const { results } = await query.all();
   return c.json(results);
@@ -90,18 +86,14 @@ expedientesRouter.get('/', async (c) => {
 
 /** Un expediente puntual, con el nombre del cliente ya resuelto. */
 expedientesRouter.get('/:id', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
-  const estudioId = c.req.query('estudio_id');
-
-  if (!estudioId) {
-    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
-  }
 
   const expediente = await c.env.DB.prepare(
     `SELECT e.*, c.nombre AS cliente_nombre, c.apellido AS cliente_apellido
      FROM expedientes e JOIN clientes c ON c.id = e.cliente_id
      WHERE e.id = ? AND e.estudio_id = ?`
-  ).bind(id, estudioId).first();
+  ).bind(id, auth.estudio_id).first();
 
   if (!expediente) {
     return c.json({ error: 'Expediente no encontrado.' }, 404);
@@ -112,19 +104,14 @@ expedientesRouter.get('/:id', async (c) => {
 
 /** Da de baja un expediente (baja lógica: no borra el registro). */
 expedientesRouter.patch('/:id/baja', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
-  const estudioId = c.req.query('estudio_id');
-
-  if (!estudioId) {
-    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
-  }
-
   const { motivo } = await c.req.json<{ motivo?: string }>();
 
   const expediente = await c.env.DB.prepare(
     'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
   )
-    .bind(id, estudioId)
+    .bind(id, auth.estudio_id)
     .first();
 
   if (!expediente) {
@@ -150,17 +137,13 @@ expedientesRouter.patch('/:id/baja', async (c) => {
 
 /** Reactiva un expediente dado de baja. */
 expedientesRouter.patch('/:id/reactivar', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
-  const estudioId = c.req.query('estudio_id');
-
-  if (!estudioId) {
-    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
-  }
 
   const expediente = await c.env.DB.prepare(
     'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
   )
-    .bind(id, estudioId)
+    .bind(id, auth.estudio_id)
     .first();
 
   if (!expediente) {
@@ -179,17 +162,16 @@ expedientesRouter.patch('/:id/reactivar', async (c) => {
 
   return c.json(actualizado);
 });
-expedientesRouter.patch("/:id", async (c) => {
-  const id = c.req.param("id");
-  const estudioId = c.req.query("estudio_id");
-  if (!estudioId) {
-    return c.json({ error: "estudio_id es obligatorio como parámetro de consulta." }, 400);
-  }
+
+expedientesRouter.patch('/:id', async (c) => {
+  const auth = c.get('auth');
+  const id = c.req.param('id');
+
   const actual = await c.env.DB.prepare(
-    "SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?"
-  ).bind(id, estudioId).first();
+    'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first();
   if (!actual) {
-    return c.json({ error: "Expediente no encontrado." }, 404);
+    return c.json({ error: 'Expediente no encontrado.' }, 404);
   }
   const body = await c.req.json();
   const campos = {
@@ -203,35 +185,34 @@ expedientesRouter.patch("/:id", async (c) => {
   };
   const entradas = Object.entries(campos).filter(([, valor]) => valor !== undefined);
   if (entradas.length === 0) {
-    return c.json({ error: "No se recibió ningún campo para actualizar." }, 400);
+    return c.json({ error: 'No se recibió ningún campo para actualizar.' }, 400);
   }
-  const asignaciones = entradas.map(([campo]) => `${campo} = ?`).join(", ");
+  const asignaciones = entradas.map(([campo]) => `${campo} = ?`).join(', ');
   const valores = entradas.map(([, valor]) => valor);
   await c.env.DB.prepare(`UPDATE expedientes SET ${asignaciones} WHERE id = ?`)
     .bind(...valores, id)
     .run();
-  const actualizado = await c.env.DB.prepare("SELECT * FROM expedientes WHERE id = ?").bind(id).first();
+  const actualizado = await c.env.DB.prepare('SELECT * FROM expedientes WHERE id = ?').bind(id).first();
   return c.json(actualizado);
 });
-expedientesRouter.delete("/:id", async (c) => {
-  const id = c.req.param("id");
-  const estudioId = c.req.query("estudio_id");
-  if (!estudioId) {
-    return c.json({ error: "estudio_id es obligatorio como parámetro de consulta." }, 400);
-  }
+
+expedientesRouter.delete('/:id', async (c) => {
+  const auth = c.get('auth');
+  const id = c.req.param('id');
+
   const expediente = await c.env.DB.prepare(
-    "SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?"
-  ).bind(id, estudioId).first();
+    'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first();
   if (!expediente) {
-    return c.json({ error: "Expediente no encontrado." }, 404);
+    return c.json({ error: 'Expediente no encontrado.' }, 404);
   }
 
   const [documentos, audiencias, actuaciones, estrategias, presupuestos] = await Promise.all([
-    c.env.DB.prepare("SELECT COUNT(*) AS total FROM documentos WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS total FROM audiencias WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS total FROM actuaciones WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS total FROM estrategias WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
-    c.env.DB.prepare("SELECT COUNT(*) AS total FROM presupuestos WHERE expediente_id = ?").bind(id).first<{ total: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS total FROM documentos WHERE expediente_id = ?').bind(id).first<{ total: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS total FROM audiencias WHERE expediente_id = ?').bind(id).first<{ total: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS total FROM actuaciones WHERE expediente_id = ?').bind(id).first<{ total: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS total FROM estrategias WHERE expediente_id = ?').bind(id).first<{ total: number }>(),
+    c.env.DB.prepare('SELECT COUNT(*) AS total FROM presupuestos WHERE expediente_id = ?').bind(id).first<{ total: number }>(),
   ]);
 
   const bloqueos: string[] = [];
@@ -244,12 +225,12 @@ expedientesRouter.delete("/:id", async (c) => {
   if (bloqueos.length > 0) {
     return c.json(
       {
-        error: `No se puede eliminar: tiene registros vinculados (${bloqueos.join(", ")}). Usá PATCH /:id/baja para archivarlo en su lugar.`,
+        error: `No se puede eliminar: tiene registros vinculados (${bloqueos.join(', ')}). Usá PATCH /:id/baja para archivarlo en su lugar.`,
       },
       409
     );
   }
 
-  await c.env.DB.prepare("DELETE FROM expedientes WHERE id = ?").bind(id).run();
+  await c.env.DB.prepare('DELETE FROM expedientes WHERE id = ?').bind(id).run();
   return c.json({ id, eliminado: true });
 });

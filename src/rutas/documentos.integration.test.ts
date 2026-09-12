@@ -1,30 +1,41 @@
-// Test de integración de la ruta de documentos vía SELF.fetch. El flujo real es
-// solicitar-subida (firma una URL de R2) -> el frontend hace PUT directo a esa URL
-// -> confirmar-subida (verifica con head() y recién ahí escribe en D1). Acá el PUT
-// directo a R2 se simula escribiendo con env.DOCUMENTOS.put() en vez de pegarle de
-// verdad a la URL firmada (que apunta a una cuenta R2 de mentira, ver vitest.config.ts).
-import { SELF } from 'cloudflare:test';
-import { describe, expect, it } from 'vitest';
+// Test de integración de la ruta de documentos, montada con requireAuth (JWKS
+// de prueba, sin red). El flujo real es solicitar-subida (firma una URL de R2)
+// -> el frontend hace PUT directo a esa URL -> confirmar-subida (verifica con
+// head() y recién ahí escribe en D1). Acá el PUT directo a R2 se simula
+// escribiendo con env.DOCUMENTOS.put() en vez de pegarle de verdad a la URL
+// firmada (que apunta a una cuenta R2 de mentira, ver vitest.config.ts).
+import { beforeEach, describe, expect, it } from 'vitest';
+import { Hono } from 'hono';
 import { env } from '../../test/env';
 import { crearEstudioDePrueba } from '../../test/fixtures';
+import { crearAppAutenticada, crearUsuarioAutenticado } from '../../test/auth';
+import type { Env } from '../tipos';
+import { documentosRouter } from './documentos';
 
-const BASE = 'http://vindexapp-api.local';
+let app: Hono<Env>;
 
-async function post(path: string, body: unknown) {
-  return SELF.fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function post(path: string, body: unknown, token: string) {
+  return app.request(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': token },
+      body: JSON.stringify(body),
+    },
+    env
+  );
 }
 
-async function solicitarSubida(estudioId: string, categoria = 'escrito_judicial') {
-  const res = await post('/api/documentos/solicitar-subida', {
-    estudio_id: estudioId,
-    categoria,
-    nombre_archivo: 'demanda.pdf',
-    content_type: 'application/pdf',
-  });
+async function get(path: string, token?: string) {
+  return app.request(path, token ? { headers: { 'Cf-Access-Jwt-Assertion': token } } : {}, env);
+}
+
+async function del(path: string, token: string) {
+  return app.request(path, { method: 'DELETE', headers: { 'Cf-Access-Jwt-Assertion': token } }, env);
+}
+
+async function solicitarSubida(token: string, categoria = 'escrito_judicial') {
+  const res = await post('/solicitar-subida', { categoria, nombre_archivo: 'demanda.pdf', content_type: 'application/pdf' }, token);
   return res.json<{ id: string; ruta_r2: string; url_subida: string; expira_en_segundos: number }>();
 }
 
@@ -34,24 +45,31 @@ async function subirArchivoDePrueba(rutaR2: string, contenido = 'contenido de pr
   return contenido.length;
 }
 
-async function crearDocumentoDePrueba(estudioId: string) {
-  const solicitud = await solicitarSubida(estudioId);
+async function crearDocumentoDePrueba(token: string) {
+  const solicitud = await solicitarSubida(token);
   await subirArchivoDePrueba(solicitud.ruta_r2);
 
-  const res = await post('/api/documentos/confirmar-subida', {
+  const res = await post('/confirmar-subida', {
     id: solicitud.id,
-    estudio_id: estudioId,
     categoria: 'escrito_judicial',
     nombre_archivo: 'demanda.pdf',
     ruta_r2: solicitud.ruta_r2,
-  });
+  }, token);
   return { ...(await res.json<{ id: string }>()), ruta_r2: solicitud.ruta_r2 };
 }
 
 describe('POST /api/documentos/solicitar-subida', () => {
+  let estudioId: string;
+  let token: string;
+
+  beforeEach(async () => {
+    app = await crearAppAutenticada(documentosRouter);
+    estudioId = await crearEstudioDePrueba(env.DB);
+    token = await crearUsuarioAutenticado(env.DB, estudioId);
+  });
+
   it('devuelve una URL firmada y una ruta_r2 bajo el estudio', async () => {
-    const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await solicitarSubida(estudioId);
+    const res = await solicitarSubida(token);
 
     expect(res.ruta_r2.startsWith(`${estudioId}/`)).toBe(true);
     expect(res.ruta_r2.endsWith('.pdf')).toBe(true);
@@ -60,38 +78,35 @@ describe('POST /api/documentos/solicitar-subida', () => {
   });
 
   it('rechaza si falta un campo obligatorio', async () => {
-    const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await post('/api/documentos/solicitar-subida', {
-      estudio_id: estudioId,
-      categoria: 'escrito_judicial',
-    });
+    const res = await post('/solicitar-subida', { categoria: 'escrito_judicial' }, token);
     expect(res.status).toBe(400);
   });
 
   it('rechaza una categoría inválida', async () => {
-    const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await post('/api/documentos/solicitar-subida', {
-      estudio_id: estudioId,
-      categoria: 'categoria_inventada',
-      nombre_archivo: 'demanda.pdf',
-    });
+    const res = await post('/solicitar-subida', { categoria: 'categoria_inventada', nombre_archivo: 'demanda.pdf' }, token);
     expect(res.status).toBe(400);
   });
 });
 
 describe('POST /api/documentos/confirmar-subida', () => {
-  it('registra el documento en D1 con el tamaño real del objeto en R2', async () => {
+  let token: string;
+
+  beforeEach(async () => {
+    app = await crearAppAutenticada(documentosRouter);
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const solicitud = await solicitarSubida(estudioId);
+    token = await crearUsuarioAutenticado(env.DB, estudioId);
+  });
+
+  it('registra el documento en D1 con el tamaño real del objeto en R2', async () => {
+    const solicitud = await solicitarSubida(token);
     const bytes = await subirArchivoDePrueba(solicitud.ruta_r2, 'contenido de prueba');
 
-    const res = await post('/api/documentos/confirmar-subida', {
+    const res = await post('/confirmar-subida', {
       id: solicitud.id,
-      estudio_id: estudioId,
       categoria: 'escrito_judicial',
       nombre_archivo: 'demanda.pdf',
       ruta_r2: solicitud.ruta_r2,
-    });
+    }, token);
 
     expect(res.status).toBe(201);
     const body = await res.json<{ id: string; tamano_bytes: number }>();
@@ -100,40 +115,53 @@ describe('POST /api/documentos/confirmar-subida', () => {
   });
 
   it('devuelve 409 si el archivo nunca se subió a R2', async () => {
-    const estudioId = await crearEstudioDePrueba(env.DB);
-    const solicitud = await solicitarSubida(estudioId);
+    const solicitud = await solicitarSubida(token);
 
-    const res = await post('/api/documentos/confirmar-subida', {
+    const res = await post('/confirmar-subida', {
       id: solicitud.id,
-      estudio_id: estudioId,
       categoria: 'escrito_judicial',
       nombre_archivo: 'demanda.pdf',
       ruta_r2: solicitud.ruta_r2,
-    });
+    }, token);
 
     expect(res.status).toBe(409);
   });
 
   it('rechaza si falta un campo obligatorio', async () => {
-    const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await post('/api/documentos/confirmar-subida', { estudio_id: estudioId });
+    const res = await post('/confirmar-subida', {}, token);
     expect(res.status).toBe(400);
+  });
+
+  it('rechaza una ruta_r2 que no corresponde a este estudio', async () => {
+    const res = await post('/confirmar-subida', {
+      id: crypto.randomUUID(),
+      categoria: 'escrito_judicial',
+      nombre_archivo: 'demanda.pdf',
+      ruta_r2: 'otro-estudio/algo.pdf',
+    }, token);
+    expect(res.status).toBe(403);
   });
 });
 
 describe('GET /api/documentos', () => {
-  it('exige estudio_id', async () => {
-    const res = await SELF.fetch(`${BASE}/api/documentos`);
-    expect(res.status).toBe(400);
+  beforeEach(async () => {
+    app = await crearAppAutenticada(documentosRouter);
   });
 
-  it('lista solo los documentos del estudio pedido', async () => {
+  it('exige autenticación', async () => {
+    const res = await get('/');
+    expect(res.status).toBe(401);
+  });
+
+  it('lista solo los documentos del estudio del usuario autenticado', async () => {
     const estudioA = await crearEstudioDePrueba(env.DB);
     const estudioB = await crearEstudioDePrueba(env.DB);
-    await crearDocumentoDePrueba(estudioA);
-    await crearDocumentoDePrueba(estudioB);
+    const tokenA = await crearUsuarioAutenticado(env.DB, estudioA);
+    const tokenB = await crearUsuarioAutenticado(env.DB, estudioB);
+    await crearDocumentoDePrueba(tokenA);
+    await crearDocumentoDePrueba(tokenB);
 
-    const res = await SELF.fetch(`${BASE}/api/documentos?estudio_id=${estudioA}`);
+    const res = await get('/', tokenA);
     const documentos = await res.json<{ nombre: string }[]>();
 
     expect(documentos).toHaveLength(1);
@@ -142,22 +170,23 @@ describe('GET /api/documentos', () => {
 });
 
 describe('GET /api/documentos/:id/descargar', () => {
-  it('exige estudio_id', async () => {
-    const res = await SELF.fetch(`${BASE}/api/documentos/no-existe/descargar`);
-    expect(res.status).toBe(400);
+  beforeEach(async () => {
+    app = await crearAppAutenticada(documentosRouter);
   });
 
   it('devuelve 404 si el documento no existe', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await SELF.fetch(`${BASE}/api/documentos/no-existe/descargar?estudio_id=${estudioId}`);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const res = await get('/no-existe/descargar', token);
     expect(res.status).toBe(404);
   });
 
   it('devuelve una URL de descarga firmada con el nombre original', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const { id } = await crearDocumentoDePrueba(estudioId);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const { id } = await crearDocumentoDePrueba(token);
 
-    const res = await SELF.fetch(`${BASE}/api/documentos/${id}/descargar?estudio_id=${estudioId}`);
+    const res = await get(`/${id}/descargar`, token);
     expect(res.status).toBe(200);
     const body = await res.json<{ url_descarga: string; nombre: string; expira_en_segundos: number }>();
     expect(body.nombre).toBe('demanda.pdf');
@@ -167,26 +196,23 @@ describe('GET /api/documentos/:id/descargar', () => {
 });
 
 describe('DELETE /api/documentos/:id', () => {
-  it('exige estudio_id', async () => {
-    const res = await SELF.fetch(`${BASE}/api/documentos/no-existe`, { method: 'DELETE' });
-    expect(res.status).toBe(400);
+  beforeEach(async () => {
+    app = await crearAppAutenticada(documentosRouter);
   });
 
   it('devuelve 404 si el documento no existe', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await SELF.fetch(`${BASE}/api/documentos/no-existe?estudio_id=${estudioId}`, {
-      method: 'DELETE',
-    });
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const res = await del('/no-existe', token);
     expect(res.status).toBe(404);
   });
 
   it('borra el documento de D1 y el objeto de R2', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const { id, ruta_r2 } = await crearDocumentoDePrueba(estudioId);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const { id, ruta_r2 } = await crearDocumentoDePrueba(token);
 
-    const res = await SELF.fetch(`${BASE}/api/documentos/${id}?estudio_id=${estudioId}`, {
-      method: 'DELETE',
-    });
+    const res = await del(`/${id}`, token);
 
     expect(res.status).toBe(200);
     const body = await res.json<{ eliminado: boolean }>();

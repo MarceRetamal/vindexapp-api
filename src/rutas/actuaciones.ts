@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const actuacionesRouter = new Hono<{ Bindings: Bindings }>();
+export const actuacionesRouter = new Hono<Env>();
+
+actuacionesRouter.use('*', requireAuth());
 
 actuacionesRouter.post('/', async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json<{
-    estudio_id: string;
     expediente_id: string;
     tipo: string;
     fecha: string;
@@ -13,12 +16,18 @@ actuacionesRouter.post('/', async (c) => {
     texto_cliente?: string;
     visible?: boolean;
     hito?: boolean;
-    creado_por?: string;
     vencimiento?: string;
   }>();
 
-  if (!body.estudio_id || !body.expediente_id || !body.tipo || !body.fecha) {
-    return c.json({ error: 'estudio_id, expediente_id, tipo y fecha son obligatorios.' }, 400);
+  if (!body.expediente_id || !body.tipo || !body.fecha) {
+    return c.json({ error: 'expediente_id, tipo y fecha son obligatorios.' }, 400);
+  }
+
+  const expediente = await c.env.DB.prepare(
+    'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
+  ).bind(body.expediente_id, auth.estudio_id).first();
+  if (!expediente) {
+    return c.json({ error: 'El expediente no existe o no pertenece a este estudio.' }, 404);
   }
 
   const id = crypto.randomUUID();
@@ -30,9 +39,9 @@ actuacionesRouter.post('/', async (c) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
-      id, body.estudio_id, body.expediente_id, body.tipo, body.fecha,
+      id, auth.estudio_id, body.expediente_id, body.tipo, body.fecha,
       body.detalle_interno ?? null, body.texto_cliente ?? null,
-      body.visible ? 1 : 0, body.hito ? 1 : 0, body.creado_por ?? null, creado_en,
+      body.visible ? 1 : 0, body.hito ? 1 : 0, auth.usuario_id, creado_en,
       body.vencimiento ?? null
     )
     .run();
@@ -41,21 +50,20 @@ actuacionesRouter.post('/', async (c) => {
 });
 
 actuacionesRouter.get('/', async (c) => {
+  const auth = c.get('auth');
   const expedienteId = c.req.query('expediente_id');
   if (!expedienteId) return c.json({ error: 'expediente_id es obligatorio.' }, 400);
 
   const { results } = await c.env.DB.prepare(
-    'SELECT * FROM actuaciones WHERE expediente_id = ? ORDER BY fecha DESC, creado_en DESC'
-  ).bind(expedienteId).all();
+    'SELECT * FROM actuaciones WHERE expediente_id = ? AND estudio_id = ? ORDER BY fecha DESC, creado_en DESC'
+  ).bind(expedienteId, auth.estudio_id).all();
 
   return c.json(results);
 });
 
 /** Actuaciones con vencimiento manual dentro de los próximos N días (default 7). */
 actuacionesRouter.get('/vencimientos-proximos', async (c) => {
-  const estudioId = c.req.query('estudio_id');
-  if (!estudioId) return c.json({ error: 'estudio_id es obligatorio.' }, 400);
-
+  const auth = c.get('auth');
   const dias = Number(c.req.query('dias') ?? '7');
 
   const hoy = new Date();
@@ -75,7 +83,7 @@ actuacionesRouter.get('/vencimientos-proximos', async (c) => {
         AND a.vencimiento BETWEEN ? AND ?
       ORDER BY a.vencimiento ASC`
   )
-    .bind(estudioId, desde, hasta)
+    .bind(auth.estudio_id, desde, hasta)
     .all();
 
   return c.json(results);
@@ -83,7 +91,16 @@ actuacionesRouter.get('/vencimientos-proximos', async (c) => {
 
 /** Marca una actuación como notificada/publicada al cliente. */
 actuacionesRouter.patch('/:id/notificar', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
+
+  const actuacion = await c.env.DB.prepare(
+    'SELECT id FROM actuaciones WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first();
+  if (!actuacion) {
+    return c.json({ error: 'Actuación no encontrada.' }, 404);
+  }
+
   await c.env.DB.prepare('UPDATE actuaciones SET notificado = 1, visible = 1 WHERE id = ?')
     .bind(id)
     .run();

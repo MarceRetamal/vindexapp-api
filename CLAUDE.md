@@ -21,7 +21,13 @@ Backend de VINDEX LEGAL App: Cloudflare Worker (Hono) + D1 + R2. Ver `README.md`
 
 ## Autenticación — NO tocar sin confirmar
 
-Cloudflare Access está configurado a nivel de infraestructura (dashboard/zona), no en el código. **Ninguna ruta en `src/rutas/` debe agregar su propio middleware de auth** — todo el tráfico ya pasa por Access antes de llegar al Worker. Si ves una ruta sin chequeo de sesión, es intencional, no un bug.
+**Actualizado 2026-09-12: esta sección reemplaza la convención anterior** (que decía que ninguna ruta debía agregar su propio middleware de auth, porque "todo el tráfico ya pasa por Access antes de llegar al Worker"). Esa premisa dejaba un agujero de seguridad real: Access protege el borde, pero dentro del Worker cualquier ruta que confiara en un `estudio_id` mandado por el cliente (query param o body) permitía a un estudio leer o escribir datos de otro. Se cerró ese agujero agregando auth explícita en el código:
+
+- Cada router en `src/rutas/` que toca datos de negocio monta `xRouter.use('*', requireAuth())` (ver `src/middleware/auth.ts`) al principio del archivo.
+- `requireAuth()` verifica el JWT de Cloudflare Access (`Cf-Access-Jwt-Assertion`) con `jose` — **no** con `ctx.access` (la API nativa), porque `ctx.access` no se puede simular en `vitest-pool-workers`/Miniflare, así que ninguna prueba real de aislamiento podría escribirse contra ella. Se verifica el JWT a mano por eso, y además porque el fallback `*.workers.dev` de un Worker no queda protegido por Access, así que no hay que confiar únicamente en el filtrado del borde.
+- El middleware resuelve el usuario en D1 por email y setea `c.set('auth', { usuario_id, estudio_id, rol, email })`. **Todo `estudio_id` usado en una ruta debe salir de `c.get('auth').estudio_id`, nunca de query/body/params** — y toda fila leída/actualizada/borrada por id debe validar `WHERE id = ? AND estudio_id = ?` (o el join equivalente cuando el id es de una tabla relacionada, ej. `expediente_id`).
+- Rutas ya migradas a este patrón: `clientes`, `expedientes`, `documentos`, `presupuestos`, `actuaciones`, `audiencias`, `estrategias`, `templates`, `usuarios`, `whoami`. **Pendientes de migrar** (todavía confían en `estudio_id`/`usuario_id` del cliente, no tocar sin evaluar el mismo problema): `dashboard`, `reportes`, `tareas`, `generador-documentos`, `google-calendar`.
+- Tests de integración de rutas protegidas: no uses `SELF.fetch` (pega contra el `index.ts` completo, cuyo `requireAuth()` sin resolver inyectado sale a la red real de Cloudflare Access y siempre da 401 en el sandbox de test). Usá `crearAppAutenticada()`/`crearUsuarioAutenticado()` de `test/auth.ts`, que montan el router real pero fuerzan a `requireAuth()` a resolver contra un JWKS local en memoria (ver `_establecerJWKSDePruebaParaTests` en `src/middleware/auth.ts` — es un seam de test explícito, no hay otra forma de inyectar el resolver dentro de un router que ya lo monta a nivel de módulo).
 
 ## Testing
 
@@ -34,6 +40,6 @@ Cloudflare Access está configurado a nivel de infraestructura (dashboard/zona),
 
 ## Qué evitar
 
-- No agregues autenticación/autorización dentro de una ruta — rompe el supuesto de que Access ya filtró el tráfico.
+- No agregues estudio_id/usuario_id tomado de query/body/params en una ruta protegida — siempre debe salir de c.get('auth') (ver "Autenticación" arriba).
 - No hardcodees español mezclado con inglés en identificadores nuevos.
 - No actives (descomentes) `MotorLCT` o `MotorConstruccion` sin que el texto legal vigente se haya confirmado en la conversación — están comentados a propósito.

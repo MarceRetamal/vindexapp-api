@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const clientesRouter = new Hono<{ Bindings: Bindings }>();
+export const clientesRouter = new Hono<Env>();
+
+clientesRouter.use('*', requireAuth());
 
 clientesRouter.post('/', async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json<{
-    estudio_id: string;
     nombre: string;
     apellido: string;
     dni?: string;
@@ -18,8 +21,8 @@ clientesRouter.post('/', async (c) => {
     notas?: string;
   }>();
 
-  if (!body.estudio_id || !body.nombre || !body.apellido) {
-    return c.json({ error: 'estudio_id, nombre y apellido son obligatorios.' }, 400);
+  if (!body.nombre || !body.apellido) {
+    return c.json({ error: 'nombre y apellido son obligatorios.' }, 400);
   }
 
   // Si viene DNI, verificamos primero si ya existe un cliente con ese
@@ -29,7 +32,7 @@ clientesRouter.post('/', async (c) => {
     const existente = await c.env.DB.prepare(
       'SELECT id, nombre, apellido FROM clientes WHERE estudio_id = ? AND dni = ?'
     )
-      .bind(body.estudio_id, body.dni)
+      .bind(auth.estudio_id, body.dni)
       .first<{ id: string; nombre: string; apellido: string }>();
 
     if (existente) {
@@ -54,7 +57,7 @@ clientesRouter.post('/', async (c) => {
     )
       .bind(
         id,
-        body.estudio_id,
+        auth.estudio_id,
         body.nombre,
         body.apellido,
         body.dni ?? null,
@@ -81,20 +84,16 @@ clientesRouter.post('/', async (c) => {
 });
 
 clientesRouter.get('/', async (c) => {
-  const estudioId = c.req.query('estudio_id');
+  const auth = c.get('auth');
   const dni = c.req.query('dni');
-
-  if (!estudioId) {
-    return c.json({ error: 'estudio_id es obligatorio como parámetro de consulta.' }, 400);
-  }
 
   const query = dni
     ? c.env.DB.prepare(
         `SELECT * FROM clientes WHERE estudio_id = ? AND dni = ?`
-      ).bind(estudioId, dni)
+      ).bind(auth.estudio_id, dni)
     : c.env.DB.prepare(
         `SELECT * FROM clientes WHERE estudio_id = ? ORDER BY apellido, nombre`
-      ).bind(estudioId);
+      ).bind(auth.estudio_id);
 
   const { results } = await query.all();
   return c.json(results);
@@ -102,11 +101,12 @@ clientesRouter.get('/', async (c) => {
 
 /** Un cliente puntual. */
 clientesRouter.get('/:id', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
 
   const cliente = await c.env.DB.prepare(
-    'SELECT * FROM clientes WHERE id = ?'
-  ).bind(id).first();
+    'SELECT * FROM clientes WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first();
 
   if (!cliente) {
     return c.json({ error: 'Cliente no encontrado.' }, 404);
@@ -117,6 +117,7 @@ clientesRouter.get('/:id', async (c) => {
 
 /** Actualiza campos de un cliente existente. Solo pisa los campos presentes en el body. */
 clientesRouter.patch('/:id', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
   const body = await c.req.json<{
     nombre?: string;
@@ -132,10 +133,10 @@ clientesRouter.patch('/:id', async (c) => {
   }>();
 
   const actual = await c.env.DB.prepare(
-    'SELECT id, estudio_id FROM clientes WHERE id = ?'
+    'SELECT id FROM clientes WHERE id = ? AND estudio_id = ?'
   )
-    .bind(id)
-    .first<{ id: string; estudio_id: string }>();
+    .bind(id, auth.estudio_id)
+    .first();
 
   if (!actual) {
     return c.json({ error: 'Cliente no encontrado.' }, 404);
@@ -145,7 +146,7 @@ clientesRouter.patch('/:id', async (c) => {
     const existente = await c.env.DB.prepare(
       'SELECT id, nombre, apellido FROM clientes WHERE estudio_id = ? AND dni = ? AND id != ?'
     )
-      .bind(actual.estudio_id, body.dni, id)
+      .bind(auth.estudio_id, body.dni, id)
       .first<{ id: string; nombre: string; apellido: string }>();
 
     if (existente) {

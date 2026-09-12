@@ -1,14 +1,17 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const audienciasRouter = new Hono<{ Bindings: Bindings }>();
+export const audienciasRouter = new Hono<Env>();
+
+audienciasRouter.use('*', requireAuth());
 
 const MODALIDADES_VALIDAS = ['Presencial', 'Videoconferencia', 'Telefónica'] as const;
 const ESTADOS_VALIDOS = ['Programada', 'Realizada', 'Suspendida', 'Cancelada'] as const;
 
 audienciasRouter.post('/', async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json<{
-    estudio_id: string;
     expediente_id: string;
     tipo: string;
     fecha: string;
@@ -18,9 +21,9 @@ audienciasRouter.post('/', async (c) => {
     recordatorio?: boolean;
   }>();
 
-  if (!body.estudio_id || !body.expediente_id || !body.tipo || !body.fecha) {
+  if (!body.expediente_id || !body.tipo || !body.fecha) {
     return c.json(
-      { error: 'estudio_id, expediente_id, tipo y fecha son obligatorios.' },
+      { error: 'expediente_id, tipo y fecha son obligatorios.' },
       400
     );
   }
@@ -32,7 +35,7 @@ audienciasRouter.post('/', async (c) => {
   const expediente = await c.env.DB.prepare(
     'SELECT id FROM expedientes WHERE id = ? AND estudio_id = ?'
   )
-    .bind(body.expediente_id, body.estudio_id)
+    .bind(body.expediente_id, auth.estudio_id)
     .first();
 
   if (!expediente) {
@@ -51,7 +54,7 @@ audienciasRouter.post('/', async (c) => {
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Programada', ?, ?)`
   )
     .bind(
-      id, body.estudio_id, body.expediente_id, body.tipo, body.fecha,
+      id, auth.estudio_id, body.expediente_id, body.tipo, body.fecha,
       body.hora ?? null, body.modalidad ?? null, body.lugar ?? null,
       body.recordatorio === false ? 0 : 1, creado_en
     )
@@ -61,20 +64,16 @@ audienciasRouter.post('/', async (c) => {
 });
 
 audienciasRouter.get('/', async (c) => {
+  const auth = c.get('auth');
   const expedienteId = c.req.query('expediente_id');
-  const estudioId = c.req.query('estudio_id');
-
-  if (!expedienteId && !estudioId) {
-    return c.json({ error: 'expediente_id o estudio_id es obligatorio.' }, 400);
-  }
 
   const query = expedienteId
     ? c.env.DB.prepare(
-        'SELECT * FROM audiencias WHERE expediente_id = ? ORDER BY fecha, hora'
-      ).bind(expedienteId)
+        'SELECT * FROM audiencias WHERE expediente_id = ? AND estudio_id = ? ORDER BY fecha, hora'
+      ).bind(expedienteId, auth.estudio_id)
     : c.env.DB.prepare(
         'SELECT * FROM audiencias WHERE estudio_id = ? ORDER BY fecha, hora'
-      ).bind(estudioId);
+      ).bind(auth.estudio_id);
 
   const { results } = await query.all();
   return c.json(results);
@@ -82,11 +81,19 @@ audienciasRouter.get('/', async (c) => {
 
 /** Cambia el estado de la audiencia (Realizada / Suspendida / Cancelada). */
 audienciasRouter.patch('/:id/estado', async (c) => {
+  const auth = c.get('auth');
   const id = c.req.param('id');
   const { estado } = await c.req.json<{ estado: string }>();
 
   if (!ESTADOS_VALIDOS.includes(estado as (typeof ESTADOS_VALIDOS)[number])) {
     return c.json({ error: `estado debe ser uno de: ${ESTADOS_VALIDOS.join(', ')}` }, 400);
+  }
+
+  const audiencia = await c.env.DB.prepare(
+    'SELECT id FROM audiencias WHERE id = ? AND estudio_id = ?'
+  ).bind(id, auth.estudio_id).first();
+  if (!audiencia) {
+    return c.json({ error: 'Audiencia no encontrada.' }, 404);
   }
 
   await c.env.DB.prepare('UPDATE audiencias SET estado = ? WHERE id = ?')

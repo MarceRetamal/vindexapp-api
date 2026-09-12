@@ -1,53 +1,67 @@
-// Test de integración de la ruta de expedientes vía SELF.fetch, contra D1 con el
-// esquema real. A diferencia de clientes, casi todo acá exige un cliente_id válido
-// (FK) además del estudio_id — de ahí crearClienteDePrueba().
-import { SELF } from 'cloudflare:test';
+// Test de integración de la ruta de expedientes, montada con requireAuth (JWKS
+// de prueba, sin red). A diferencia de clientes, casi todo acá exige un
+// cliente_id válido (FK) además del estudio del usuario autenticado.
 import { beforeEach, describe, expect, it } from 'vitest';
+import { Hono } from 'hono';
 import { env } from '../../test/env';
 import { crearClienteDePrueba, crearEstudioDePrueba } from '../../test/fixtures';
+import { crearAppAutenticada, crearUsuarioAutenticado } from '../../test/auth';
+import type { Env } from '../tipos';
+import { expedientesRouter } from './expedientes';
 
-const BASE = 'http://vindexapp-api.local';
+let app: Hono<Env>;
 
-async function post(path: string, body: unknown) {
-  return SELF.fetch(`${BASE}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function post(path: string, body: unknown, token: string) {
+  return app.request(
+    path,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': token },
+      body: JSON.stringify(body),
+    },
+    env
+  );
 }
 
-async function patch(path: string, body: unknown) {
-  return SELF.fetch(`${BASE}${path}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+async function patch(path: string, body: unknown, token: string) {
+  return app.request(
+    path,
+    {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', 'Cf-Access-Jwt-Assertion': token },
+      body: JSON.stringify(body),
+    },
+    env
+  );
 }
 
-async function crearExpedienteDePrueba(estudioId: string, clienteId: string) {
-  const res = await post('/api/expedientes', {
-    estudio_id: estudioId,
-    cliente_id: clienteId,
-    caratula: 'Pérez c/ Gómez s/ Despido',
-  });
+async function del(path: string, token: string) {
+  return app.request(path, { method: 'DELETE', headers: { 'Cf-Access-Jwt-Assertion': token } }, env);
+}
+
+async function get(path: string, token?: string) {
+  return app.request(path, token ? { headers: { 'Cf-Access-Jwt-Assertion': token } } : {}, env);
+}
+
+async function crearExpedienteDePrueba(token: string, clienteId: string) {
+  const res = await post('/', { cliente_id: clienteId, caratula: 'Pérez c/ Gómez s/ Despido' }, token);
   return res.json<{ id: string }>();
 }
 
 describe('POST /api/expedientes', () => {
   let estudioId: string;
   let clienteId: string;
+  let token: string;
 
   beforeEach(async () => {
+    app = await crearAppAutenticada(expedientesRouter);
     estudioId = await crearEstudioDePrueba(env.DB);
     clienteId = await crearClienteDePrueba(env.DB, estudioId);
+    token = await crearUsuarioAutenticado(env.DB, estudioId);
   });
 
   it('crea un expediente en estado "En trámite" con los campos obligatorios', async () => {
-    const res = await post('/api/expedientes', {
-      estudio_id: estudioId,
-      cliente_id: clienteId,
-      caratula: 'Pérez c/ Gómez s/ Despido',
-    });
+    const res = await post('/', { cliente_id: clienteId, caratula: 'Pérez c/ Gómez s/ Despido' }, token);
 
     expect(res.status).toBe(201);
     const body = await res.json<{ id: string; caratula: string; cliente_id: string }>();
@@ -56,16 +70,12 @@ describe('POST /api/expedientes', () => {
   });
 
   it('rechaza la creación si falta un campo obligatorio', async () => {
-    const res = await post('/api/expedientes', { estudio_id: estudioId, cliente_id: clienteId });
+    const res = await post('/', { cliente_id: clienteId }, token);
     expect(res.status).toBe(400);
   });
 
   it('devuelve 404 si el cliente no existe', async () => {
-    const res = await post('/api/expedientes', {
-      estudio_id: estudioId,
-      cliente_id: crypto.randomUUID(),
-      caratula: 'Pérez c/ Gómez s/ Despido',
-    });
+    const res = await post('/', { cliente_id: crypto.randomUUID(), caratula: 'Pérez c/ Gómez s/ Despido' }, token);
     expect(res.status).toBe(404);
   });
 
@@ -73,31 +83,32 @@ describe('POST /api/expedientes', () => {
     const otroEstudioId = await crearEstudioDePrueba(env.DB);
     const clienteDeOtroEstudio = await crearClienteDePrueba(env.DB, otroEstudioId);
 
-    const res = await post('/api/expedientes', {
-      estudio_id: estudioId,
-      cliente_id: clienteDeOtroEstudio,
-      caratula: 'Pérez c/ Gómez s/ Despido',
-    });
+    const res = await post('/', { cliente_id: clienteDeOtroEstudio, caratula: 'Pérez c/ Gómez s/ Despido' }, token);
 
     expect(res.status).toBe(404);
   });
 });
 
 describe('GET /api/expedientes', () => {
-  it('exige estudio_id como query param', async () => {
-    const res = await SELF.fetch(`${BASE}/api/expedientes`);
-    expect(res.status).toBe(400);
+  beforeEach(async () => {
+    app = await crearAppAutenticada(expedientesRouter);
+  });
+
+  it('exige autenticación', async () => {
+    const res = await get('/');
+    expect(res.status).toBe(401);
   });
 
   it('filtra por cliente_id cuando se pasa', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteA = await crearClienteDePrueba(env.DB, estudioId);
     const clienteB = await crearClienteDePrueba(env.DB, estudioId);
 
-    await post('/api/expedientes', { estudio_id: estudioId, cliente_id: clienteA, caratula: 'Expediente A' });
-    await post('/api/expedientes', { estudio_id: estudioId, cliente_id: clienteB, caratula: 'Expediente B' });
+    await post('/', { cliente_id: clienteA, caratula: 'Expediente A' }, token);
+    await post('/', { cliente_id: clienteB, caratula: 'Expediente B' }, token);
 
-    const res = await SELF.fetch(`${BASE}/api/expedientes?estudio_id=${estudioId}&cliente_id=${clienteA}`);
+    const res = await get(`/?cliente_id=${clienteA}`, token);
     const expedientes = await res.json<{ caratula: string }[]>();
 
     expect(expedientes).toHaveLength(1);
@@ -106,37 +117,55 @@ describe('GET /api/expedientes', () => {
 });
 
 describe('GET /api/expedientes/:id', () => {
-  it('exige estudio_id como query param', async () => {
-    const res = await SELF.fetch(`${BASE}/api/expedientes/no-existe`);
-    expect(res.status).toBe(400);
+  beforeEach(async () => {
+    app = await crearAppAutenticada(expedientesRouter);
   });
 
   it('devuelve 404 si no existe en ese estudio', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await SELF.fetch(`${BASE}/api/expedientes/no-existe?estudio_id=${estudioId}`);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const res = await get('/no-existe', token);
     expect(res.status).toBe(404);
   });
 
   it('devuelve el expediente con el nombre del cliente resuelto', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteId = await crearClienteDePrueba(env.DB, estudioId);
-    const { id } = await crearExpedienteDePrueba(estudioId, clienteId);
+    const { id } = await crearExpedienteDePrueba(token, clienteId);
 
-    const res = await SELF.fetch(`${BASE}/api/expedientes/${id}?estudio_id=${estudioId}`);
+    const res = await get(`/${id}`, token);
     expect(res.status).toBe(200);
     const body = await res.json<{ cliente_nombre: string; cliente_apellido: string }>();
     expect(body.cliente_nombre).toBe('Cliente');
     expect(body.cliente_apellido).toBe('De Prueba');
   });
+
+  it('devuelve 404 si el expediente es de otro estudio', async () => {
+    const estudioA = await crearEstudioDePrueba(env.DB);
+    const estudioB = await crearEstudioDePrueba(env.DB);
+    const tokenA = await crearUsuarioAutenticado(env.DB, estudioA);
+    const tokenB = await crearUsuarioAutenticado(env.DB, estudioB);
+    const clienteB = await crearClienteDePrueba(env.DB, estudioB);
+    const { id } = await crearExpedienteDePrueba(tokenB, clienteB);
+
+    const res = await get(`/${id}`, tokenA);
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('PATCH /api/expedientes/:id', () => {
+  beforeEach(async () => {
+    app = await crearAppAutenticada(expedientesRouter);
+  });
+
   it('actualiza solo los campos presentes en el body', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteId = await crearClienteDePrueba(env.DB, estudioId);
-    const { id } = await crearExpedienteDePrueba(estudioId, clienteId);
+    const { id } = await crearExpedienteDePrueba(token, clienteId);
 
-    const res = await patch(`/api/expedientes/${id}?estudio_id=${estudioId}`, { numero: '12345/2026' });
+    const res = await patch(`/${id}`, { numero: '12345/2026' }, token);
 
     expect(res.status).toBe(200);
     const body = await res.json<{ numero: string; caratula: string }>();
@@ -146,23 +175,27 @@ describe('PATCH /api/expedientes/:id', () => {
 
   it('devuelve 400 si el body no trae ningún campo', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteId = await crearClienteDePrueba(env.DB, estudioId);
-    const { id } = await crearExpedienteDePrueba(estudioId, clienteId);
+    const { id } = await crearExpedienteDePrueba(token, clienteId);
 
-    const res = await patch(`/api/expedientes/${id}?estudio_id=${estudioId}`, {});
+    const res = await patch(`/${id}`, {}, token);
     expect(res.status).toBe(400);
   });
 });
 
 describe('PATCH /api/expedientes/:id/baja y /reactivar', () => {
+  beforeEach(async () => {
+    app = await crearAppAutenticada(expedientesRouter);
+  });
+
   it('archiva el expediente con fecha y motivo de baja', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteId = await crearClienteDePrueba(env.DB, estudioId);
-    const { id } = await crearExpedienteDePrueba(estudioId, clienteId);
+    const { id } = await crearExpedienteDePrueba(token, clienteId);
 
-    const res = await patch(`/api/expedientes/${id}/baja?estudio_id=${estudioId}`, {
-      motivo: 'Acuerdo extrajudicial',
-    });
+    const res = await patch(`/${id}/baja`, { motivo: 'Acuerdo extrajudicial' }, token);
 
     expect(res.status).toBe(200);
     const body = await res.json<{ estado: string; motivo_baja: string; baja: string }>();
@@ -173,11 +206,12 @@ describe('PATCH /api/expedientes/:id/baja y /reactivar', () => {
 
   it('reactiva un expediente dado de baja, limpiando baja y motivo_baja', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteId = await crearClienteDePrueba(env.DB, estudioId);
-    const { id } = await crearExpedienteDePrueba(estudioId, clienteId);
-    await patch(`/api/expedientes/${id}/baja?estudio_id=${estudioId}`, { motivo: 'x' });
+    const { id } = await crearExpedienteDePrueba(token, clienteId);
+    await patch(`/${id}/baja`, { motivo: 'x' }, token);
 
-    const res = await patch(`/api/expedientes/${id}/reactivar?estudio_id=${estudioId}`, {});
+    const res = await patch(`/${id}/reactivar`, {}, token);
 
     expect(res.status).toBe(200);
     const body = await res.json<{ estado: string; motivo_baja: string | null; baja: string | null }>();
@@ -188,20 +222,24 @@ describe('PATCH /api/expedientes/:id/baja y /reactivar', () => {
 
   it('devuelve 404 al dar de baja un expediente inexistente', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await patch(`/api/expedientes/no-existe/baja?estudio_id=${estudioId}`, {});
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const res = await patch('/no-existe/baja', {}, token);
     expect(res.status).toBe(404);
   });
 });
 
 describe('DELETE /api/expedientes/:id', () => {
+  beforeEach(async () => {
+    app = await crearAppAutenticada(expedientesRouter);
+  });
+
   it('elimina un expediente sin registros vinculados', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteId = await crearClienteDePrueba(env.DB, estudioId);
-    const { id } = await crearExpedienteDePrueba(estudioId, clienteId);
+    const { id } = await crearExpedienteDePrueba(token, clienteId);
 
-    const res = await SELF.fetch(`${BASE}/api/expedientes/${id}?estudio_id=${estudioId}`, {
-      method: 'DELETE',
-    });
+    const res = await del(`/${id}`, token);
 
     expect(res.status).toBe(200);
     const body = await res.json<{ eliminado: boolean }>();
@@ -210,8 +248,9 @@ describe('DELETE /api/expedientes/:id', () => {
 
   it('rechaza con 409 si tiene documentos vinculados, y sugiere /baja', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
     const clienteId = await crearClienteDePrueba(env.DB, estudioId);
-    const { id } = await crearExpedienteDePrueba(estudioId, clienteId);
+    const { id } = await crearExpedienteDePrueba(token, clienteId);
 
     await env.DB.prepare(
       `INSERT INTO documentos (id, estudio_id, expediente_id, categoria, nombre, extension, ruta_r2, creado_en)
@@ -220,9 +259,7 @@ describe('DELETE /api/expedientes/:id', () => {
       .bind(crypto.randomUUID(), estudioId, id, `expedientes/${id}/demanda.pdf`, Date.now())
       .run();
 
-    const res = await SELF.fetch(`${BASE}/api/expedientes/${id}?estudio_id=${estudioId}`, {
-      method: 'DELETE',
-    });
+    const res = await del(`/${id}`, token);
 
     expect(res.status).toBe(409);
     const body = await res.json<{ error: string }>();
@@ -232,9 +269,8 @@ describe('DELETE /api/expedientes/:id', () => {
 
   it('devuelve 404 si el expediente no existe', async () => {
     const estudioId = await crearEstudioDePrueba(env.DB);
-    const res = await SELF.fetch(`${BASE}/api/expedientes/no-existe?estudio_id=${estudioId}`, {
-      method: 'DELETE',
-    });
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const res = await del('/no-existe', token);
     expect(res.status).toBe(404);
   });
 });

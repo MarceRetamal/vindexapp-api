@@ -1,14 +1,17 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const usuariosRouter = new Hono<{ Bindings: Bindings }>();
+export const usuariosRouter = new Hono<Env>();
+
+usuariosRouter.use('*', requireAuth());
 
 const ROLES_VALIDOS = ['titular', 'asociado', 'administrativo'] as const;
 type Rol = (typeof ROLES_VALIDOS)[number];
 
 usuariosRouter.post('/', async (c) => {
+  const auth = c.get('auth');
   const body = await c.req.json<{
-    estudio_id: string;
     nombre: string;
     apellido: string;
     dni?: string;
@@ -20,9 +23,9 @@ usuariosRouter.post('/', async (c) => {
     rol: Rol;
   }>();
 
-  if (!body.estudio_id || !body.nombre || !body.apellido || !body.email || !body.rol) {
+  if (!body.nombre || !body.apellido || !body.email || !body.rol) {
     return c.json(
-      { error: 'estudio_id, nombre, apellido, email y rol son obligatorios.' },
+      { error: 'nombre, apellido, email y rol son obligatorios.' },
       400
     );
   }
@@ -42,7 +45,7 @@ usuariosRouter.post('/', async (c) => {
     )
       .bind(
         id,
-        body.estudio_id,
+        auth.estudio_id,
         body.nombre,
         body.apellido,
         body.dni ?? null,
@@ -67,18 +70,14 @@ usuariosRouter.post('/', async (c) => {
 });
 
 usuariosRouter.get('/', async (c) => {
-  const estudioId = c.req.query('estudio_id');
+  const auth = c.get('auth');
 
-  const query = estudioId
-    ? c.env.DB.prepare(
-        `SELECT id, estudio_id, nombre, apellido, dni, email, rol, activo, creado_en
-         FROM usuarios WHERE estudio_id = ? ORDER BY apellido, nombre`
-      ).bind(estudioId)
-    : c.env.DB.prepare(
-        `SELECT id, estudio_id, nombre, apellido, dni, email, rol, activo, creado_en
-         FROM usuarios ORDER BY apellido, nombre`
-      );
+  const { results } = await c.env.DB.prepare(
+    `SELECT id, estudio_id, nombre, apellido, dni, email, rol, activo, creado_en
+     FROM usuarios WHERE estudio_id = ? ORDER BY apellido, nombre`
+  )
+    .bind(auth.estudio_id)
+    .all();
 
-  const { results } = await query.all();
   return c.json(results);
 });
