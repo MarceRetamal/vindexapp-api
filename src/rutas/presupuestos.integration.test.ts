@@ -294,8 +294,21 @@ describe('PATCH /api/presupuestos/:id', () => {
     const { id } = await crearPresupuestoConCliente(token, clienteId);
     await patch(`/${id}/firmar`, { expediente_id: expedienteId }, token);
 
-    const res = await del(`/${id}`, token);
+    const res = await patch(`/${id}`, { monto: 1 }, token);
     expect(res.status).toBe(409);
+  });
+});
+
+describe('DELETE /api/presupuestos/:id', () => {
+  it('elimina un presupuesto no firmado', async () => {
+    const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const { id } = await crearPresupuestoDePotencialCliente(token);
+
+    const res = await del(`/${id}`, token);
+    expect(res.status).toBe(200);
+    const body = await res.json<{ eliminado: boolean }>();
+    expect(body.eliminado).toBe(true);
   });
 
   it('devuelve 404 si no existe', async () => {
