@@ -27,6 +27,20 @@ async function patch(path: string, token: string) {
   return app.request(path, { method: 'PATCH', headers: { 'Cf-Access-Jwt-Assertion': token } }, env);
 }
 
+async function del(path: string, token: string) {
+  return app.request(path, { method: 'DELETE', headers: { 'Cf-Access-Jwt-Assertion': token } }, env);
+}
+
+/** Inserta un documento directo en D1 (sin pasar por el flujo de subida a R2) para los tests de vínculo. */
+async function crearDocumentoDePrueba(estudioId: string, expedienteId: string | null = null) {
+  const id = crypto.randomUUID();
+  await env.DB.prepare(
+    `INSERT INTO documentos (id, estudio_id, expediente_id, categoria, nombre, extension, ruta_r2, creado_en)
+     VALUES (?, ?, ?, 'resolucion', 'proveido.pdf', 'pdf', ?, ?)`
+  ).bind(id, estudioId, expedienteId, `${estudioId}/${id}.pdf`, Date.now()).run();
+  return id;
+}
+
 async function get(path: string, token?: string) {
   return app.request(path, token ? { headers: { 'Cf-Access-Jwt-Assertion': token } } : {}, env);
 }
@@ -205,5 +219,205 @@ describe('PATCH /api/actuaciones/:id/notificar', () => {
 
     const res = await patch(`/${id}/notificar`, otroToken);
     expect(res.status).toBe(404);
+  });
+});
+
+describe('GET /api/actuaciones (vista MEV con adjuntos)', () => {
+  beforeEach(async () => {
+    app = await crearAppAutenticada(actuacionesRouter);
+  });
+
+  it('devuelve documentos: [] para una actuación sin adjuntos', async () => {
+    const { expedienteId, token } = await armarExpediente();
+    await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+
+    const res = await get(`/?expediente_id=${expedienteId}`, token);
+    const actuaciones = await res.json<{ documentos: unknown[] }[]>();
+    expect(actuaciones[0]?.documentos).toEqual([]);
+  });
+
+  it('incluye los documentos vinculados a cada actuación', async () => {
+    const { estudioId, expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Resolución', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+
+    await env.DB.prepare(
+      'INSERT INTO actuacion_documentos (actuacion_id, documento_id, creado_en) VALUES (?, ?, ?)'
+    ).bind(id, documentoId, Date.now()).run();
+
+    const res = await get(`/?expediente_id=${expedienteId}`, token);
+    const actuaciones = await res.json<{ id: string; documentos: { id: string; nombre: string }[] }[]>();
+    const actuacion = actuaciones.find((a) => a.id === id);
+    expect(actuacion?.documentos).toHaveLength(1);
+    expect(actuacion?.documentos[0]?.nombre).toBe('proveido.pdf');
+  });
+});
+
+describe('GET /api/actuaciones/:id', () => {
+  beforeEach(async () => {
+    app = await crearAppAutenticada(actuacionesRouter);
+  });
+
+  it('devuelve el detalle completo con sus adjuntos', async () => {
+    const { estudioId, expedienteId, token } = await armarExpediente();
+    const creada = await post(
+      '/',
+      { expediente_id: expedienteId, tipo: 'Resolución', fecha: fechaMasDias(0), detalle_interno: 'Detalle interno' },
+      token
+    );
+    const { id } = await creada.json<{ id: string }>();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+    await env.DB.prepare(
+      'INSERT INTO actuacion_documentos (actuacion_id, documento_id, creado_en) VALUES (?, ?, ?)'
+    ).bind(id, documentoId, Date.now()).run();
+
+    const res = await get(`/${id}`, token);
+    expect(res.status).toBe(200);
+    const body = await res.json<{ detalle_interno: string; documentos: { id: string }[] }>();
+    expect(body.detalle_interno).toBe('Detalle interno');
+    expect(body.documentos).toHaveLength(1);
+  });
+
+  it('devuelve 404 si la actuación es de otro estudio', async () => {
+    const { expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+
+    const otroEstudioId = await crearEstudioDePrueba(env.DB);
+    const otroToken = await crearUsuarioAutenticado(env.DB, otroEstudioId);
+
+    const res = await get(`/${id}`, otroToken);
+    expect(res.status).toBe(404);
+  });
+});
+
+describe('POST /api/actuaciones/:id/documentos (vincular adjunto)', () => {
+  beforeEach(async () => {
+    app = await crearAppAutenticada(actuacionesRouter);
+  });
+
+  it('vincula un documento existente del mismo expediente', async () => {
+    const { estudioId, expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+
+    const res = await post(`/${id}/documentos`, { documento_id: documentoId }, token);
+    expect(res.status).toBe(201);
+
+    const vinculo = await env.DB.prepare(
+      'SELECT 1 FROM actuacion_documentos WHERE actuacion_id = ? AND documento_id = ?'
+    ).bind(id, documentoId).first();
+    expect(vinculo).toBeTruthy();
+  });
+
+  it('rechaza si falta documento_id', async () => {
+    const { expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+
+    const res = await post(`/${id}/documentos`, {}, token);
+    expect(res.status).toBe(400);
+  });
+
+  it('devuelve 404 si la actuación es de otro estudio', async () => {
+    const { estudioId, expedienteId } = await armarExpediente();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+
+    const otroEstudioId = await crearEstudioDePrueba(env.DB);
+    const otroToken = await crearUsuarioAutenticado(env.DB, otroEstudioId);
+
+    const res = await post(`/no-existe/documentos`, { documento_id: documentoId }, otroToken);
+    expect(res.status).toBe(404);
+  });
+
+  it('devuelve 404 si el documento no existe o es de otro estudio', async () => {
+    const { expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+
+    const otroEstudioId = await crearEstudioDePrueba(env.DB);
+    const documentoDeOtroEstudio = await crearDocumentoDePrueba(otroEstudioId);
+
+    const res = await post(`/${id}/documentos`, { documento_id: documentoDeOtroEstudio }, token);
+    expect(res.status).toBe(404);
+  });
+
+  it('rechaza si el documento pertenece a otro expediente del mismo estudio', async () => {
+    const { estudioId, expedienteId, clienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+
+    const otroExpedienteId = await crearExpedienteDePrueba(env.DB, estudioId, clienteId);
+    const documentoDeOtroExpediente = await crearDocumentoDePrueba(estudioId, otroExpedienteId);
+
+    const res = await post(`/${id}/documentos`, { documento_id: documentoDeOtroExpediente }, token);
+    expect(res.status).toBe(400);
+  });
+
+  it('devuelve 409 si el documento ya estaba vinculado', async () => {
+    const { estudioId, expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+
+    await post(`/${id}/documentos`, { documento_id: documentoId }, token);
+    const res = await post(`/${id}/documentos`, { documento_id: documentoId }, token);
+    expect(res.status).toBe(409);
+  });
+});
+
+describe('DELETE /api/actuaciones/:id/documentos/:documentoId (desvincular adjunto)', () => {
+  beforeEach(async () => {
+    app = await crearAppAutenticada(actuacionesRouter);
+  });
+
+  it('desvincula el documento sin borrarlo', async () => {
+    const { estudioId, expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+    await post(`/${id}/documentos`, { documento_id: documentoId }, token);
+
+    const res = await del(`/${id}/documentos/${documentoId}`, token);
+    expect(res.status).toBe(200);
+
+    const vinculo = await env.DB.prepare(
+      'SELECT 1 FROM actuacion_documentos WHERE actuacion_id = ? AND documento_id = ?'
+    ).bind(id, documentoId).first();
+    expect(vinculo).toBeNull();
+
+    const documentoSigueExistiendo = await env.DB.prepare('SELECT id FROM documentos WHERE id = ?').bind(documentoId).first();
+    expect(documentoSigueExistiendo).toBeTruthy();
+  });
+
+  it('devuelve 404 si el vínculo no existe', async () => {
+    const { estudioId, expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+
+    const res = await del(`/${id}/documentos/${documentoId}`, token);
+    expect(res.status).toBe(404);
+  });
+
+  it('devuelve 404 si la actuación es de otro estudio', async () => {
+    const { estudioId, expedienteId, token } = await armarExpediente();
+    const creada = await post('/', { expediente_id: expedienteId, tipo: 'Escrito', fecha: fechaMasDias(0) }, token);
+    const { id } = await creada.json<{ id: string }>();
+    const documentoId = await crearDocumentoDePrueba(estudioId, expedienteId);
+    await post(`/${id}/documentos`, { documento_id: documentoId }, token);
+
+    const otroEstudioId = await crearEstudioDePrueba(env.DB);
+    const otroToken = await crearUsuarioAutenticado(env.DB, otroEstudioId);
+
+    const res = await del(`/${id}/documentos/${documentoId}`, otroToken);
+    expect(res.status).toBe(404);
+
+    const vinculoSigueExistiendo = await env.DB.prepare(
+      'SELECT 1 FROM actuacion_documentos WHERE actuacion_id = ? AND documento_id = ?'
+    ).bind(id, documentoId).first();
+    expect(vinculoSigueExistiendo).toBeTruthy();
   });
 });
