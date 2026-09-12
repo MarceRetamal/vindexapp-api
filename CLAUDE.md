@@ -18,6 +18,8 @@ Backend de VINDEX LEGAL App: Cloudflare Worker (Hono) + D1 + R2. Ver `README.md`
 - **Errores de API**: `c.json({ error: '...' }, <status>)` con mensajes en español, terminados en punto. 400 (validación), 404 (no encontrado), 409 (conflicto/duplicado), 500 (cae al `app.onError` central en `index.ts`, no repitas ese catch-all en cada ruta).
 - **Condiciones de carrera en constraints UNIQUE**: el patrón es chequear existencia antes (mensaje claro) *y* capturar `UNIQUE constraint failed` en el `catch` del `INSERT`/`UPDATE` (ver `src/rutas/clientes.ts`) — las dos capas, no solo una.
 - **Migraciones**: archivos numerados secuencialmente en `migrations/` (`000N_descripcion.sql`). Nunca edites una migración ya aplicada; sumá una nueva.
+- **Adjuntos de una actuación (vista MEV, `0006_actuacion_documentos.sql`)**: son N a N vía la tabla puente `actuacion_documentos`, no la columna vieja `actuaciones.documento_id` (1 a 1, deprecada — quedó de la migración inicial, no la uses en código nuevo). `GET /api/actuaciones` y `GET /api/actuaciones/:id` devuelven el array `documentos` armado desde esa tabla; vincular/desvincular es `POST /:id/documentos` y `DELETE /:id/documentos/:documentoId` en `actuaciones.ts`, exige que el documento sea del mismo `expediente_id` que la actuación.
+- **`GET /api/documentos/:id/descargar`**: por default `response-content-disposition: inline` (para poder abrir el archivo en el navegador, no solo bajarlo) y `response-content-type` según extensión (ver `src/lib/mime.ts`). `?descarga=1` fuerza `attachment`.
 
 ## Autenticación — NO tocar sin confirmar
 
