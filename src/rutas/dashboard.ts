@@ -1,11 +1,14 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const dashboardRouter = new Hono<{ Bindings: Bindings }>();
+export const dashboardRouter = new Hono<Env>();
+
+dashboardRouter.use('*', requireAuth());
 
 dashboardRouter.get('/', async (c) => {
-  const estudioId = c.req.query('estudio_id');
-  if (!estudioId) return c.json({ error: 'estudio_id es obligatorio.' }, 400);
+  const auth = c.get('auth');
+  const estudioId = auth.estudio_id;
 
   const dias = 7;
   const hoy = new Date();
