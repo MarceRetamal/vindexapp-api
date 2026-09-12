@@ -1,15 +1,15 @@
 import { Hono } from 'hono';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const googleCalendarRouter = new Hono<{ Bindings: Bindings }>();
+export const googleCalendarRouter = new Hono<Env>();
+
+googleCalendarRouter.use('*', requireAuth());
 
 const REDIRECT_URI = 'https://panel.vindexlegal.com.ar/api/google-calendar/callback';
 const SCOPE = 'https://www.googleapis.com/auth/calendar';
 
 googleCalendarRouter.get('/conectar', async (c) => {
-  const usuarioId = c.req.query('usuario_id');
-  if (!usuarioId) return c.json({ error: 'usuario_id es obligatorio.' }, 400);
-
   const params = new URLSearchParams({
     client_id: c.env.GOOGLE_CLIENT_ID,
     redirect_uri: REDIRECT_URI,
@@ -17,24 +17,20 @@ googleCalendarRouter.get('/conectar', async (c) => {
     scope: SCOPE,
     access_type: 'offline',
     prompt: 'consent',
-    state: btoa(usuarioId),
+    // El usuario a conectar sale de la sesión autenticada en /callback (vía
+    // requireAuth), no de este parámetro. state ya no porta identidad —
+    // solo protege contra CSRF, como recomienda el flujo OAuth de Google.
+    state: crypto.randomUUID(),
   });
 
   return c.json({ url: `https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}` });
 });
 
 googleCalendarRouter.get('/callback', async (c) => {
+  const auth = c.get('auth');
   const code = c.req.query('code');
-  const state = c.req.query('state');
 
-  if (!code || !state) {
-    return c.redirect('https://panel.vindexlegal.com.ar/agenda?google=error', 302);
-  }
-
-  let usuarioId: string;
-  try {
-    usuarioId = atob(state);
-  } catch {
+  if (!code) {
     return c.redirect('https://panel.vindexlegal.com.ar/agenda?google=error', 302);
   }
 
@@ -65,13 +61,13 @@ googleCalendarRouter.get('/callback', async (c) => {
     const existente = await c.env.DB.prepare(
       'SELECT refresh_token FROM google_tokens WHERE usuario_id = ?'
     )
-      .bind(usuarioId)
+      .bind(auth.usuario_id)
       .first<{ refresh_token: string }>();
 
     let refreshToken = tokenData.refresh_token;
     if (!refreshToken) {
       if (!existente) {
-        console.error('Google no devolvió refresh_token y no hay conexión previa para', usuarioId);
+        console.error('Google no devolvió refresh_token y no hay conexión previa para', auth.usuario_id);
         return c.redirect('https://panel.vindexlegal.com.ar/agenda?google=error', 302);
       }
       refreshToken = existente.refresh_token;
@@ -85,7 +81,7 @@ googleCalendarRouter.get('/callback', async (c) => {
         (usuario_id, access_token, refresh_token, expira_en, google_calendar_id, conectado_en)
        VALUES (?, ?, ?, ?, COALESCE((SELECT google_calendar_id FROM google_tokens WHERE usuario_id = ?), NULL), ?)`
     )
-      .bind(usuarioId, tokenData.access_token, refreshToken, expiraEn, usuarioId, conectadoEn)
+      .bind(auth.usuario_id, tokenData.access_token, refreshToken, expiraEn, auth.usuario_id, conectadoEn)
       .run();
 
     return c.redirect('https://panel.vindexlegal.com.ar/agenda?google=conectado', 302);
@@ -96,13 +92,12 @@ googleCalendarRouter.get('/callback', async (c) => {
 });
 
 googleCalendarRouter.get('/estado', async (c) => {
-  const usuarioId = c.req.query('usuario_id');
-  if (!usuarioId) return c.json({ error: 'usuario_id es obligatorio.' }, 400);
+  const auth = c.get('auth');
 
   const fila = await c.env.DB.prepare(
     'SELECT google_calendar_id FROM google_tokens WHERE usuario_id = ?'
   )
-    .bind(usuarioId)
+    .bind(auth.usuario_id)
     .first<{ google_calendar_id: string | null }>();
 
   return c.json({
@@ -112,10 +107,9 @@ googleCalendarRouter.get('/estado', async (c) => {
 });
 
 googleCalendarRouter.delete('/desconectar', async (c) => {
-  const usuarioId = c.req.query('usuario_id');
-  if (!usuarioId) return c.json({ error: 'usuario_id es obligatorio.' }, 400);
+  const auth = c.get('auth');
 
-  await c.env.DB.prepare('DELETE FROM google_tokens WHERE usuario_id = ?').bind(usuarioId).run();
+  await c.env.DB.prepare('DELETE FROM google_tokens WHERE usuario_id = ?').bind(auth.usuario_id).run();
 
-  return c.json({ usuario_id: usuarioId, desconectado: true });
+  return c.json({ usuario_id: auth.usuario_id, desconectado: true });
 });
