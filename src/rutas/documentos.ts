@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { firmarUrlR2 } from "../lib/r2-firmado";
+import { contentTypePorExtension } from "../lib/mime";
 import type { Env } from "../tipos";
 import { requireAuth } from "../middleware/auth";
 
@@ -138,28 +139,36 @@ documentosRouter.get("/", async (c) => {
   return c.json(results);
 });
 
-// Ahora devuelve una URL firmada de lectura (5 min), no el archivo proxiado.
+// Devuelve una URL firmada de lectura (5 min), no el archivo proxiado.
+// Por default abre "inline" (el navegador lo muestra en pestaña si puede:
+// PDF, imágenes) para poder abrirlo con un clic desde la vista de expediente
+// estilo MEV; pasando ?descarga=1 fuerza "attachment" (bajarlo en vez de
+// visualizarlo).
 documentosRouter.get("/:id/descargar", async (c) => {
   const auth = c.get('auth');
   const id = c.req.param("id");
+  const forzarDescarga = c.req.query("descarga") === "1";
 
   const doc = await c.env.DB.prepare(
-    "SELECT nombre, ruta_r2 FROM documentos WHERE id = ? AND estudio_id = ?"
+    "SELECT nombre, extension, ruta_r2 FROM documentos WHERE id = ? AND estudio_id = ?"
   )
     .bind(id, auth.estudio_id)
-    .first<{ nombre: string; ruta_r2: string }>();
+    .first<{ nombre: string; extension: string; ruta_r2: string }>();
   if (!doc) {
     return c.json({ error: "Documento no encontrado." }, 404);
   }
 
+  const disposicion = forzarDescarga ? "attachment" : "inline";
+
   const url_descarga = await firmarUrlR2(c.env, "GET", doc.ruta_r2, {
     expiresInSeconds: 300,
     extraParams: {
-      "response-content-disposition": `attachment; filename="${doc.nombre}"`,
+      "response-content-disposition": `${disposicion}; filename="${doc.nombre}"`,
+      "response-content-type": contentTypePorExtension(doc.extension),
     },
   });
 
-  return c.json({ url_descarga, nombre: doc.nombre, expira_en_segundos: 300 });
+  return c.json({ url_descarga, nombre: doc.nombre, expira_en_segundos: 300, modo: disposicion });
 });
 
 documentosRouter.delete("/:id", async (c) => {
