@@ -193,6 +193,29 @@ describe('GET /api/documentos/:id/descargar', () => {
     expect(body.expira_en_segundos).toBe(300);
     expect(body.url_descarga).toContain('response-content-disposition');
   });
+
+  it('por default abre inline (para poder visualizarlo en el navegador), no forzando la descarga', async () => {
+    const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const { id } = await crearDocumentoDePrueba(token);
+
+    const res = await get(`/${id}/descargar`, token);
+    const body = await res.json<{ url_descarga: string; modo: string }>();
+    expect(body.modo).toBe('inline');
+    expect(body.url_descarga).toContain('response-content-disposition=inline');
+    expect(body.url_descarga).toContain('response-content-type=application%2Fpdf');
+  });
+
+  it('con ?descarga=1 fuerza attachment en vez de inline', async () => {
+    const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
+    const { id } = await crearDocumentoDePrueba(token);
+
+    const res = await get(`/${id}/descargar?descarga=1`, token);
+    const body = await res.json<{ url_descarga: string; modo: string }>();
+    expect(body.modo).toBe('attachment');
+    expect(body.url_descarga).toContain('response-content-disposition=attachment');
+  });
 });
 
 describe('DELETE /api/documentos/:id', () => {
