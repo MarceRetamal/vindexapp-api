@@ -1,9 +1,12 @@
 import { Hono } from 'hono';
 import PizZip from 'pizzip';
 import Docxtemplater from 'docxtemplater';
-import type { Bindings } from '../tipos';
+import type { Env } from '../tipos';
+import { requireAuth } from '../middleware/auth';
 
-export const generadorDocumentosRouter = new Hono<{ Bindings: Bindings }>();
+export const generadorDocumentosRouter = new Hono<Env>();
+
+generadorDocumentosRouter.use('*', requireAuth());
 
 // TODO: mover a una columna en `estudios` (p. ej. domicilio_procesal) cuando
 // exista más de un estudio usando este generador.
@@ -18,18 +21,19 @@ function formatearFechaHoy(): string {
 }
 
 generadorDocumentosRouter.post('/', async (c) => {
+  const auth = c.get('auth');
+  const estudio_id = auth.estudio_id;
   const body = await c.req.json<{
-    estudio_id: string;
     template_id: string;
     expediente_id: string;
     categoria_resultado?: string;
   }>();
 
-  const { estudio_id, template_id, expediente_id, categoria_resultado } = body;
+  const { template_id, expediente_id, categoria_resultado } = body;
 
-  if (!estudio_id || !template_id || !expediente_id) {
+  if (!template_id || !expediente_id) {
     return c.json(
-      { error: 'estudio_id, template_id y expediente_id son obligatorios.' },
+      { error: 'template_id y expediente_id son obligatorios.' },
       400
     );
   }
@@ -164,7 +168,7 @@ generadorDocumentosRouter.post('/', async (c) => {
       'docx',
       ruta_r2,
       tamano_bytes,
-      null,
+      auth.usuario_id,
       creado_en
     )
     .run();
