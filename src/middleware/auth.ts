@@ -148,21 +148,34 @@ export function requireAuth(
 /**
  * Middleware de Hono exclusivo del router de integración con n8n
  * (src/rutas/n8n.ts). Exige un JWT de Cloudflare Access de un Service Token
- * (claim `common_name`, nunca `email`) cuyo nombre coincida exactamente con
- * `c.env.N8N_SERVICE_TOKEN_NAME`, e inyecta { estudio_id, nombre } en el
- * contexto ("servicio").
+ * (claim `common_name`, nunca `email`) cuyo Client ID coincida exactamente
+ * con `c.env.N8N_SERVICE_TOKEN_CLIENT_ID`, e inyecta { estudio_id, nombre }
+ * en el contexto ("servicio").
+ *
+ * Dos cosas que NO son obvias y costaron un ida y vuelta real en producción
+ * para descubrir (ver commit que agregó este comentario):
+ * (1) `common_name` en el JWT es el **Client ID** del Service Token (ej.
+ *     "10fc7be...access"), NO el nombre lindo que se le puso en el
+ *     dashboard de Access (ej. "n8n-vindexapp"). Comparar contra el nombre
+ *     del dashboard siempre da 401.
+ * (2) La Access Application dedicada a `/api/n8n` tiene su **propio AUD**,
+ *     distinto de `c.env.ACCESS_AUD` (el de la Application principal del
+ *     panel). Por eso acá se verifica contra `c.env.N8N_ACCESS_AUD`, no
+ *     contra `c.env.ACCESS_AUD` — usar el AUD equivocado también da 401
+ *     (audiencia inválida) aunque el token sea perfectamente válido.
  *
  * No consulta `usuarios` en D1: un Service Token no es un usuario, es una
  * credencial de la automatización. estudio_id sale de `c.env.N8N_ESTUDIO_ID`
  * (VINDEX es de un solo estudio hoy; si algún día hay más de uno con su
  * propia automatización, esto pasa a ser una tabla en vez de una env var).
  *
- * El chequeo de `common_name` es una capa extra de defensa en profundidad:
- * Access ya debería estar configurado con una Application dedicada a
- * `/api/n8n/*` que solo acepta ese Service Token puntual (ver CLAUDE.md), así
- * que en el camino normal ningún otro token llega hasta acá — pero si algún
- * día se agrega un segundo Service Token a la misma Application por error,
- * este chequeo evita que ese token nuevo herede acceso no pedido a esta ruta.
+ * El chequeo de Client ID en código es la restricción real: la policy de
+ * Access en la Application es "Any Access Service Token" (cualquier token
+ * válido de la cuenta, no uno puntual — ver CLAUDE.md), así que este chequeo
+ * es lo único que restringe el acceso al token de n8n específicamente. Si en
+ * algún momento se ajusta la policy de Access para exigir el token puntual,
+ * este chequeo pasa a ser defense in depth, pero mientras tanto es la única
+ * restricción real.
  */
 export function requireServiceAuth(
   resolverJWKS: ResolverJWKS = obtenerJWKS
@@ -176,7 +189,7 @@ export function requireServiceAuth(
     let commonName: string;
     try {
       const jwks = resolverJWKS(c.env.ACCESS_TEAM_DOMINIO);
-      const verificado = await verificarAccessJWT(token, jwks, c.env.ACCESS_AUD);
+      const verificado = await verificarAccessJWT(token, jwks, c.env.N8N_ACCESS_AUD);
       if (!verificado.commonName) {
         return c.json({ error: 'No autenticado.' }, 401);
       }
@@ -185,7 +198,7 @@ export function requireServiceAuth(
       return c.json({ error: 'No autenticado.' }, 401);
     }
 
-    if (commonName !== c.env.N8N_SERVICE_TOKEN_NAME) {
+    if (commonName !== c.env.N8N_SERVICE_TOKEN_CLIENT_ID) {
       return c.json({ error: 'Service Token no reconocido.' }, 403);
     }
 
