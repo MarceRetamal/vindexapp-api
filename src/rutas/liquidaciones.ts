@@ -101,8 +101,11 @@ function validarDatosBaseLiquidacion(
  * Liquidación de despido sin causa/indirecto para personal de casas particulares
  * (Ley 26.844). Endpoint de cálculo puro: no lee ni escribe en la base de datos.
  *
- * Sin middleware de auth propio, igual que el resto de las rutas: Cloudflare Access
- * ya protege todo el Worker a nivel de dashboard/zona (ver README.md).
+ * A propósito SIN requireAuth(): es la calculadora pública de indemnizaciones de
+ * vindexlegal.com.ar (lead-gen para visitantes anónimos, no una herramienta interna
+ * del estudio). No confundir con las rutas de negocio del resto de src/rutas/, que sí
+ * requieren auth desde 2026-09-12 (ver "Autenticación" en CLAUDE.md); esta es la
+ * única excepción intencional.
  */
 liquidacionesRouter.post('/casas-particulares', async (c) => {
   const body = await c.req.json<BodyLiquidacionCasasParticulares>();
