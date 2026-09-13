@@ -22,10 +22,13 @@ async function crearJWKSDePrueba() {
 
 async function firmarToken(
   privateKey: CryptoKey,
-  opciones: { email?: string; audiencia?: string; expiracionUnix?: number }
+  opciones: { email?: string; commonName?: string; audiencia?: string; expiracionUnix?: number }
 ) {
   const ahora = Math.floor(Date.now() / 1000);
-  return new SignJWT(opciones.email ? { email: opciones.email } : {})
+  const claims: Record<string, string> = {};
+  if (opciones.email) claims.email = opciones.email;
+  if (opciones.commonName) claims.common_name = opciones.commonName;
+  return new SignJWT(claims)
     .setProtectedHeader({ alg: 'RS256', kid: 'clave-de-prueba' })
     .setIssuedAt(ahora)
     .setAudience(opciones.audiencia ?? AUDIENCIA)
@@ -70,12 +73,22 @@ describe('verificarAccessJWT', () => {
     await expect(verificarAccessJWT('esto-no-es-un-jwt', jwks, AUDIENCIA)).rejects.toThrow();
   });
 
+  it('acepta un token de Service Token (common_name, sin email) y devuelve commonName', async () => {
+    const { privateKey, jwks } = await crearJWKSDePrueba();
+    const token = await firmarToken(privateKey, { commonName: 'n8n-vindex' });
+
+    const resultado = await verificarAccessJWT(token, jwks, AUDIENCIA);
+
+    expect(resultado.commonName).toBe('n8n-vindex');
+    expect(resultado.email).toBeNull();
+  });
+
   it('rechaza un token valido sin claim de email', async () => {
     const { privateKey, jwks } = await crearJWKSDePrueba();
     const token = await firmarToken(privateKey, {});
 
     await expect(verificarAccessJWT(token, jwks, AUDIENCIA)).rejects.toThrow(
-      'El token no incluye un email válido.'
+      'El token no incluye un email ni un common_name válido.'
     );
   });
 });
