@@ -31,7 +31,13 @@
     "R2_ACCOUNT_ID": "ac90cd69f2088668dcc37901b18b00a8",
     "R2_BUCKET_NAME": "vindexapp-documentos",
     "ACCESS_TEAM_DOMINIO": "retamalmarcelo078",
-    "ACCESS_AUD": "192c32db0a55abfea99d6eaa2cb90decf324a8ff2e5007e4973fea6dded2e1a2"
+    "ACCESS_AUD": "192c32db0a55abfea99d6eaa2cb90decf324a8ff2e5007e4973fea6dded2e1a2",
+    // TODO(Marcelo): reemplazar por el estudio_id real (ver SELECT id FROM estudios)
+    // y por el nombre exacto que le pongas al Service Token en el dashboard de Access
+    // al crearlo (Zero Trust > Access > Service Auth > Service Tokens). Ver CLAUDE.md,
+    // sección "Integración con n8n", para los pasos completos.
+    "N8N_ESTUDIO_ID": "PENDIENTE-completar-con-el-estudio_id-real",
+    "N8N_SERVICE_TOKEN_NAME": "PENDIENTE-completar-con-el-nombre-del-service-token"
   },
 
   "observability": {
