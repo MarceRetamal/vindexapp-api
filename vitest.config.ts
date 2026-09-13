@@ -32,6 +32,8 @@ export default defineConfig({
           // para que los tests de auth no dependan de configuración de producción.
           ACCESS_TEAM_DOMINIO: 'equipo-de-prueba',
           ACCESS_AUD: 'aud-de-prueba',
+          N8N_ESTUDIO_ID: 'estudio-n8n-de-prueba',
+          N8N_SERVICE_TOKEN_NAME: 'n8n-vindex-de-prueba',
         },
       },
     }),
