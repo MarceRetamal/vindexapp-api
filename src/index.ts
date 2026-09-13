@@ -18,6 +18,7 @@ import { dashboardRouter } from './rutas/dashboard';
 import { reportesRouter } from './rutas/reportes';
 import { generadorDocumentosRouter } from './rutas/generador-documentos';
 import { googleCalendarRouter } from './rutas/google-calendar';
+import { n8nRouter } from './rutas/n8n';
 
 const app = new Hono<{ Bindings: Bindings }>();
 
@@ -47,6 +48,7 @@ app.route('/api/dashboard', dashboardRouter);
 app.route('/api/reportes', reportesRouter);
 app.route('/api/generador-documentos', generadorDocumentosRouter);
 app.route('/api/google-calendar', googleCalendarRouter);
+app.route('/api/n8n', n8nRouter);
 
 app.onError((err, c) => {
   console.error(err);
