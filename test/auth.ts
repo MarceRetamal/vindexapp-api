@@ -47,8 +47,13 @@ export async function firmarTokenDePrueba(email: string): Promise<string> {
 /**
  * Firma un JWT "de Service Token" para requireServiceAuth (claim
  * common_name, sin email) — ver test de n8n.ts. commonName debe coincidir
- * con N8N_SERVICE_TOKEN_NAME de vitest.config.ts para pasar el chequeo de
- * requireServiceAuth, salvo que el test pruebe explícitamente el caso 403.
+ * con N8N_SERVICE_TOKEN_CLIENT_ID de vitest.config.ts para pasar el chequeo
+ * de requireServiceAuth, salvo que el test pruebe explícitamente el caso 403.
+ * En producción ese claim es el Client ID del token, no el nombre del
+ * dashboard — ver el comentario en middleware/auth.ts. Firma con la
+ * audiencia 'aud-n8n-de-prueba' (no la misma que firmarTokenDePrueba),
+ * reflejando que en producción la Access Application de n8n tiene su
+ * propio AUD, distinto del resto del panel — ver N8N_ACCESS_AUD.
  */
 export async function firmarTokenDeServicioDePrueba(commonName: string): Promise<string> {
   await asegurarClaves();
@@ -56,7 +61,7 @@ export async function firmarTokenDeServicioDePrueba(commonName: string): Promise
   return new SignJWT({ common_name: commonName })
     .setProtectedHeader({ alg: 'RS256', kid: 'clave-de-prueba' })
     .setIssuedAt(ahora)
-    .setAudience('aud-de-prueba')
+    .setAudience('aud-n8n-de-prueba')
     .setExpirationTime(ahora + 300)
     .sign(privateKey!);
 }
