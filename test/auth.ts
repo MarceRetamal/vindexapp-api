@@ -14,7 +14,7 @@ import {
 } from 'jose';
 import type { D1Database } from '@cloudflare/workers-types';
 import { _establecerJWKSDePruebaParaTests } from '../src/middleware/auth';
-import type { Env } from '../src/tipos';
+import type { Bindings } from '../src/tipos';
 
 let jwks: JWTVerifyGetKey | undefined;
 let privateKey: CryptoKey | undefined;
@@ -44,6 +44,23 @@ export async function firmarTokenDePrueba(email: string): Promise<string> {
     .sign(privateKey!);
 }
 
+/**
+ * Firma un JWT "de Service Token" para requireServiceAuth (claim
+ * common_name, sin email) — ver test de n8n.ts. commonName debe coincidir
+ * con N8N_SERVICE_TOKEN_NAME de vitest.config.ts para pasar el chequeo de
+ * requireServiceAuth, salvo que el test pruebe explícitamente el caso 403.
+ */
+export async function firmarTokenDeServicioDePrueba(commonName: string): Promise<string> {
+  await asegurarClaves();
+  const ahora = Math.floor(Date.now() / 1000);
+  return new SignJWT({ common_name: commonName })
+    .setProtectedHeader({ alg: 'RS256', kid: 'clave-de-prueba' })
+    .setIssuedAt(ahora)
+    .setAudience('aud-de-prueba')
+    .setExpirationTime(ahora + 300)
+    .sign(privateKey!);
+}
+
 /** Crea un usuario titular en el estudio dado y devuelve un token de Access válido para él. */
 export async function crearUsuarioAutenticado(
   db: D1Database,
@@ -61,14 +78,19 @@ export async function crearUsuarioAutenticado(
 }
 
 /**
- * Monta un router individual. El router ya trae su propio requireAuth() (así
- * lo exige el diseño de cada archivo en src/rutas/); acá solo nos aseguramos
- * de que ese requireAuth() resuelva contra el JWKS local de prueba en vez de
- * salir a la red real de Cloudflare Access.
+ * Monta un router individual. El router ya trae su propio requireAuth() o
+ * requireServiceAuth() (así lo exige el diseño de cada archivo en
+ * src/rutas/); acá solo nos aseguramos de que ese middleware resuelva contra
+ * el JWKS local de prueba en vez de salir a la red real de Cloudflare
+ * Access. Genérico sobre el tipo de entorno para servir tanto a los routers
+ * de negocio (Env/AuthContext) como al de integración con n8n
+ * (EnvServicio/ServicioContext).
  */
-export async function crearAppAutenticada(router: Hono<Env>): Promise<Hono<Env>> {
+export async function crearAppAutenticada<E extends { Bindings: Bindings }>(
+  router: Hono<E>
+): Promise<Hono<E>> {
   await asegurarClaves();
-  const app = new Hono<Env>();
+  const app = new Hono<E>();
   app.route('/', router);
   return app;
 }
