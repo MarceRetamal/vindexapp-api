@@ -1,9 +1,16 @@
-// Test de integración de la ruta de estudios. Es la única entidad sin estudio_id
-// propio (es la raíz del aislamiento multi-estudio) y sin autenticación en el
-// código — ver la nota en el propio router sobre por qué (Access se agrega aparte).
+// Test de integración de la ruta de estudios.
+// POST sigue sin auth a propósito (alta de un tenant nuevo, ver la nota en el
+// propio router) y se prueba contra el Worker completo con SELF.fetch. GET
+// pasó a requerir auth y a devolver solo el propio estudio — se prueba
+// montando el router con crearAppAutenticada(), como el resto de las rutas.
 import { SELF } from 'cloudflare:test';
+import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import { env } from '../../test/env';
+import { crearEstudioDePrueba } from '../../test/fixtures';
+import { crearAppAutenticada, crearUsuarioAutenticado } from '../../test/auth';
+import type { Env } from '../tipos';
+import { estudiosRouter } from './estudios';
 
 const BASE = 'http://vindexapp-api.local';
 
@@ -56,39 +63,34 @@ describe('POST /api/estudios', () => {
 });
 
 describe('GET /api/estudios', () => {
-  it('devuelve todos los estudios, incluido el recién creado', async () => {
-    const res1 = await post('/api/estudios', { nombre: `Estudio de prueba ${crypto.randomUUID()}` });
-    const { id, nombre } = await res1.json<{ id: string; nombre: string }>();
+  let app: Hono<Env>;
 
-    const res2 = await SELF.fetch(`${BASE}/api/estudios`);
-    expect(res2.status).toBe(200);
-    const estudios = await res2.json<{ id: string; nombre: string }[]>();
-
-    expect(estudios.some((e) => e.id === id && e.nombre === nombre)).toBe(true);
+  it('exige autenticación', async () => {
+    app = await crearAppAutenticada(estudiosRouter);
+    const res = await app.request('/', {}, env);
+    expect(res.status).toBe(401);
   });
 
-  it('ordena por fecha de creación descendente', async () => {
-    // Timestamps explícitos e insertados directo en D1: dos POST reales podrían caer
-    // en el mismo milisegundo y volver el orden no determinístico. La tabla no tiene
-    // aislamiento por estudio_id (es la raíz del modelo), así que se compara la
-    // posición relativa de estos dos IDs entre sí, no el índice 0 de la lista completa.
-    const idPrimero = crypto.randomUUID();
-    const idSegundo = crypto.randomUUID();
-    await env.DB.prepare(
-      "INSERT INTO estudios (id, nombre, creado_en, activo) VALUES (?, 'Orden - primero', 1000, 1)"
-    )
-      .bind(idPrimero)
-      .run();
-    await env.DB.prepare(
-      "INSERT INTO estudios (id, nombre, creado_en, activo) VALUES (?, 'Orden - segundo', 2000, 1)"
-    )
-      .bind(idSegundo)
-      .run();
+  it('devuelve únicamente el propio estudio del usuario autenticado', async () => {
+    app = await crearAppAutenticada(estudiosRouter);
+    const estudioId = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioId);
 
-    const res = await SELF.fetch(`${BASE}/api/estudios`);
+    const res = await app.request('/', { headers: { 'Cf-Access-Jwt-Assertion': token } }, env);
+    expect(res.status).toBe(200);
     const estudios = await res.json<{ id: string }[]>();
-    const posiciones = estudios.map((e) => e.id);
+    expect(estudios).toHaveLength(1);
+    expect(estudios[0]?.id).toBe(estudioId);
+  });
 
-    expect(posiciones.indexOf(idSegundo)).toBeLessThan(posiciones.indexOf(idPrimero));
+  it('no expone estudios de otros tenants', async () => {
+    app = await crearAppAutenticada(estudiosRouter);
+    const estudioPropio = await crearEstudioDePrueba(env.DB);
+    const estudioAjeno = await crearEstudioDePrueba(env.DB);
+    const token = await crearUsuarioAutenticado(env.DB, estudioPropio);
+
+    const res = await app.request('/', { headers: { 'Cf-Access-Jwt-Assertion': token } }, env);
+    const estudios = await res.json<{ id: string }[]>();
+    expect(estudios.some((e) => e.id === estudioAjeno)).toBe(false);
   });
 });
