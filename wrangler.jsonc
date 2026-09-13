@@ -32,12 +32,15 @@
     "R2_BUCKET_NAME": "vindexapp-documentos",
     "ACCESS_TEAM_DOMINIO": "retamalmarcelo078",
     "ACCESS_AUD": "192c32db0a55abfea99d6eaa2cb90decf324a8ff2e5007e4973fea6dded2e1a2",
-    // Service Token "n8n-vindexapp" (Zero Trust > Access > Service credentials),
-    // consumido por requireServiceAuth() en src/middleware/auth.ts. Application
-    // de Access: "VINDEX API - n8n", panel.vindexlegal.com.ar/api/n8n, policy
-    // "Automatización n8n" (Service Auth). Ver CLAUDE.md, sección "Integración con n8n".
+    // Service Token "n8n-vindexapp" (Zero Trust > Access > Service credentials).
+    // Application de Access: "VINDEX API - n8n", panel.vindexlegal.com.ar/api/n8n,
+    // policy "Automatización n8n" (Service Auth). Ver CLAUDE.md, sección
+    // "Integración con n8n" — incluye la corrección real de un 401 en producción
+    // por confundir el nombre del dashboard con el Client ID, y por usar el AUD
+    // equivocado.
     "N8N_ESTUDIO_ID": "366d5f7a-8070-4661-9015-98f9f3e517b9",
-    "N8N_SERVICE_TOKEN_NAME": "n8n-vindexapp"
+    "N8N_ACCESS_AUD": "efc194ab6846a40ac2ab5ac4d37eb2c1786f02700fca426f081b2281447ce4b",
+    "N8N_SERVICE_TOKEN_CLIENT_ID": "10fc7be5847dcea4e8fcd47c0feccdbe.access"
   },
 
   "observability": {
